@@ -4,8 +4,8 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "migrate:local": "wrangler d1 migrations apply ymonitor --local",
-    "migrate:remote": "wrangler d1 migrations apply ymonitor --remote"
+    "migrate:local": "wrangler d1 migrations apply public-peers --local",
+    "migrate:remote": "wrangler d1 migrations apply public-peers --remote"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261003.1",

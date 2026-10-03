@@ -6,7 +6,7 @@
  */
 
 export interface Env {
-  DB: D1Database;
+  PUBLIC_PEERS: D1Database; // binding name from wrangler.toml
   INGEST_TOKEN: string;
 }
 
@@ -62,7 +62,7 @@ export default {
 // ---------- handlers ----------
 
 async function getPeers(env: Env): Promise<Response> {
-  const { results } = await env.DB.prepare(
+  const { results } = await env.PUBLIC_PEERS.prepare(
     "SELECT key, ipv6, endpoints, coords, updated_at, last_answer_ts FROM peers ORDER BY key"
   ).all<DbPeer>();
   const peers = (results ?? []).map((r) => ({
@@ -78,7 +78,7 @@ async function getPeers(env: Env): Promise<Response> {
 }
 
 async function getPeer(env: Env, key: string): Promise<Response> {
-  const r = await env.DB.prepare(
+  const r = await env.PUBLIC_PEERS.prepare(
     "SELECT key, ipv6, endpoints, coords, updated_at, last_answer_ts FROM peers WHERE key = ?"
   )
     .bind(key)
@@ -104,7 +104,7 @@ async function getHistory(env: Env, key: string, url: URL): Promise<Response> {
   if (to !== null) (sql += " AND ts <= ?"), args.push(to);
   sql += " ORDER BY ts DESC LIMIT ?";
   args.push(limit);
-  const { results } = await env.DB.prepare(sql).bind(...args).all<EventRow>();
+  const { results } = await env.PUBLIC_PEERS.prepare(sql).bind(...args).all<EventRow>();
   return json({ key, events: results ?? [] });
 }
 
@@ -117,7 +117,7 @@ async function getHistory(env: Env, key: string, url: URL): Promise<Response> {
 //   * every strict prefix of any coords is a "dot" node; chains of degree-1
 //     dots may be freely path-compressed for readability.
 async function getTree(env: Env): Promise<Response> {
-  const { results } = await env.DB.prepare(
+  const { results } = await env.PUBLIC_PEERS.prepare(
     "SELECT coords, key, ipv6 FROM peers WHERE coords IS NOT NULL ORDER BY key"
   ).all<{ coords: string; key: string; ipv6: string }>();
   return json({
@@ -128,12 +128,12 @@ async function getTree(env: Env): Promise<Response> {
 }
 
 async function getStats(env: Env): Promise<Response> {
-  const peers = await env.DB.prepare(
+  const peers = await env.PUBLIC_PEERS.prepare(
     "SELECT COUNT(*) AS total, SUM(coords IS NOT NULL) AS present FROM peers"
   ).first<{ total: number; present: number }>();
-  const events = await env.DB.prepare("SELECT COUNT(*) AS total FROM events").first<{ total: number }>();
+  const events = await env.PUBLIC_PEERS.prepare("SELECT COUNT(*) AS total FROM events").first<{ total: number }>();
   const dayAgo = Math.floor(Date.now() / 1000) - 86400;
-  const recent = await env.DB.prepare("SELECT COUNT(*) AS total FROM events WHERE ts >= ?")
+  const recent = await env.PUBLIC_PEERS.prepare("SELECT COUNT(*) AS total FROM events WHERE ts >= ?")
     .bind(dayAgo)
     .first<{ total: number }>();
   return json({
@@ -186,7 +186,7 @@ async function ingest(request: Request, env: Env): Promise<Response> {
   const stmts: D1PreparedStatement[] = [];
   for (const p of peers) {
     stmts.push(
-      env.DB.prepare(
+      env.PUBLIC_PEERS.prepare(
         `INSERT INTO peers (key, ipv6, endpoints, coords, updated_at, last_answer_ts)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)
          ON CONFLICT(key) DO UPDATE SET
@@ -198,27 +198,27 @@ async function ingest(request: Request, env: Env): Promise<Response> {
   }
   for (const e of events) {
     stmts.push(
-      env.DB.prepare(
+      env.PUBLIC_PEERS.prepare(
         `INSERT OR IGNORE INTO events (ts, peer_key, old_coords, new_coords)
          VALUES (?1, ?2, ?3, ?4)`
       ).bind(e.ts, e.peer_key, e.old_coords, e.new_coords)
     );
   }
   stmts.push(
-    env.DB.prepare(
+    env.PUBLIC_PEERS.prepare(
       `INSERT INTO meta (key, value) VALUES ('poll_ts', ?1)
        ON CONFLICT(key) DO UPDATE SET value = excluded.value`
     ).bind(String(body.poll_ts))
   );
 
   for (let i = 0; i < stmts.length; i += BATCH_CHUNK) {
-    await env.DB.batch(stmts.slice(i, i + BATCH_CHUNK));
+    await env.PUBLIC_PEERS.batch(stmts.slice(i, i + BATCH_CHUNK));
   }
   return json({ ok: true, applied: { peers: peers.length, events: events.length } });
 }
 
 async function pollTs(env: Env): Promise<number> {
-  const r = await env.DB.prepare("SELECT value FROM meta WHERE key = 'poll_ts'").first<{ value: string }>();
+  const r = await env.PUBLIC_PEERS.prepare("SELECT value FROM meta WHERE key = 'poll_ts'").first<{ value: string }>();
   return Number(r?.value ?? 0);
 }
 

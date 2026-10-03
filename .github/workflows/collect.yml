@@ -1,0 +1,48 @@
+name: collect
+
+# Пока только ручной запуск (Actions -> collect -> Run workflow).
+# Для автоматического опроса раскомментируйте schedule: значения
+# POLL_INTERVAL/VANISH_AFTER ниже уже подобраны под интервал 30 минут.
+on:
+  workflow_dispatch: {}
+  # schedule:
+  #   - cron: '*/30 * * * *'
+
+concurrency:
+  group: collect
+  cancel-in-progress: false # не убивать выполняющийся сбор данных
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read # pull образа из GHCR
+    steps:
+      - name: Check configuration
+        env:
+          WORKER_URL: ${{ vars.WORKER_URL }}
+          INGEST_TOKEN: ${{ secrets.INGEST_TOKEN }}
+        run: |
+          [ -n "$WORKER_URL" ]   || { echo "::error::Repository variable WORKER_URL is not set"; exit 1; }
+          [ -n "$INGEST_TOKEN" ] || { echo "::error::Repository secret INGEST_TOKEN is not set"; exit 1; }
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run collector (-once)
+        env:
+          WORKER_URL: ${{ vars.WORKER_URL }}
+          INGEST_TOKEN: ${{ secrets.INGEST_TOKEN }}
+        run: |
+          docker run --rm \
+            -e WORKER_URL="$WORKER_URL" \
+            -e INGEST_TOKEN="$INGEST_TOKEN" \
+            -e ONCE=1 \
+            -e POLL_INTERVAL=30m \
+            -e VANISH_AFTER=90m \
+            ghcr.io/drewcyber/public-peers-map:latest

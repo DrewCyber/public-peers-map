@@ -1,7 +1,5 @@
 # ymonitor — мониторинг дерева публичных пиров Yggdrasil
 
-Репозиторий: https://github.com/DrewCyber/public-peers-map
-
 Коллектор опрашивает все публичные пиры сети Yggdrasil и складывает их текущие
 координаты (путь в дереве от корня) и историю их изменений в D1. Поверх —
 публичный JSON API на Cloudflare Worker: чтение без какой-либо авторизации,
@@ -75,11 +73,16 @@ cd worker
 npm install
 
 npx wrangler login
-npx wrangler d1 create ymonitor          # скопируйте database_id в wrangler.toml
+cp wrangler.toml.example wrangler.toml   # затем вписать в него database_id
+npx wrangler d1 create public-peers      # скопируйте database_id в wrangler.toml
 npm run migrate:remote                   # применить схему
 npx wrangler secret put INGEST_TOKEN     # придумайте токен для коллектора
 npm run deploy                           # URL вида https://ymonitor-api.<sub>.workers.dev
 ```
+
+`wrangler.toml` с реальным `database_id` не коммитится (в `.gitignore`);
+в репо лежит `wrangler.toml.example`. Binding должен называться
+`PUBLIC_PEERS` — на это имя рассчитан код.
 
 Локальная проверка без аккаунта: `cp .env.example .dev.vars 2>/dev/null; echo "INGEST_TOKEN=dev" > .dev.vars && npm run migrate:local && npm run dev` → http://localhost:8787.
 
@@ -102,6 +105,20 @@ docker run --rm \
 ```
 
 Без Docker: `go build ./cmd/ymonitor && WORKER_URL=... INGEST_TOKEN=... ./ymonitor`.
+
+### Запуск коллектора из GitHub Actions (без своего хостинга)
+
+В репозитории есть workflow `collect` (`.github/workflows/collect.yml`) с
+ручным запуском: **Actions → collect → Run workflow**. Раннер скачивает
+образ из GHCR и выполняет `-once`. Требуются:
+
+- Repository variable `WORKER_URL`;
+- Repository secret `INGEST_TOKEN`;
+- образ `ghcr.io/drewcyber/public-peers-map:latest` (публикуется CI из `main`).
+
+Параметры `POLL_INTERVAL=30m` / `VANISH_AFTER=90m` в workflow подобраны под
+будущий автоматический запуск раз в 30 минут — для перехода на него
+раскомментируйте блок `schedule` в файле workflow.
 
 Не запускайте демон и `-once` одновременно — события задвоятся (дедуп
 защитит от дублей, но не от лишних циклов).
