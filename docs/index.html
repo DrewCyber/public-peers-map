@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Дерево публичных пиров Yggdrasil</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #0b1220; color: #cbd5e1;
+         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
+           padding: 10px 16px; border-bottom: 1px solid #1e293b; }
+  h1 { font-size: 15px; font-weight: 600; margin: 0; color: #e2e8f0; }
+  #meta { font-size: 12px; color: #64748b; }
+  #meta .legend { margin-left: 10px; white-space: nowrap; }
+  .sw { display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+        margin: 0 4px 0 8px; vertical-align: baseline; }
+  #refresh { margin-left: auto; background: #1e293b; color: #cbd5e1; border: 1px solid #334155;
+             border-radius: 6px; padding: 4px 12px; font: inherit; font-size: 12px; cursor: pointer; }
+  #refresh:hover { background: #334155; }
+  #wrap { position: relative; }
+  svg { display: block; width: 100vw; height: calc(100vh - 43px); cursor: grab; }
+  svg.panning { cursor: grabbing; }
+  .edge { stroke: #334155; stroke-width: 1.2; fill: none; }
+  circle.node { cursor: pointer; }
+  circle.dot   { fill: #64748b; }
+  circle.peer  { fill: #38bdf8; }
+  circle.rootn { fill: #fbbf24; }
+  text.lbl      { fill: #94a3b8; font-size: 11px; font-family: ui-monospace, monospace; }
+  text.lbl.peer { fill: #7dd3fc; }
+  text.lbl.rootn{ fill: #fde68a; }
+  #tip { position: fixed; display: none; z-index: 10; pointer-events: none;
+         background: #0f172a; border: 1px solid #334155; border-radius: 6px;
+         padding: 4px 8px; font-size: 12px; white-space: pre; }
+  #err { color: #f87171; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Дерево публичных пиров Yggdrasil</h1>
+  <div id="meta">загрузка…</div>
+  <button id="refresh" title="Обновить данные сейчас">Обновить</button>
+</header>
+<div id="wrap"><svg id="tree" xmlns="http://www.w3.org/2000/svg"></svg></div>
+<div id="tip"></div>
+
+<script>
+"use strict";
+
+// Единственное место, которое надо поправить при смене деплоя API.
+const API_URL = "https://ymonitor-api.drucyber.workers.dev";
+const REFRESH_MS = 5 * 60 * 1000; // автообновление данных
+
+const svg = document.getElementById("tree");
+const metaEl = document.getElementById("meta");
+const tipEl = document.getElementById("tip");
+
+// ---------- данные ----------
+
+async function load() {
+  const res = await fetch(API_URL + "/v1/tree", { cache: "no-store" });
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  return res.json();
+}
+
+// Строим дерево из координат: каждый префикс любой coords — узел;
+// родитель "1.2.3" — "1.2"; "" — корень. Полный coords пира = его узел.
+function buildNodes(peers) {
+  const nodes = new Map();
+  const ensure = (id, depth) => {
+    let n = nodes.get(id);
+    if (!n) { n = { id, depth, children: new Map(), peer: null, x: 0, y: 0 }; nodes.set(id, n); }
+    return n;
+  };
+  ensure("", 0);
+  for (const p of peers) {
+    const parts = p.coords === "" ? [] : p.coords.split(".");
+    let parent = nodes.get("");
+    for (let i = 0; i < parts.length; i++) {
+      const id = parts.slice(0, i + 1).join(".");
+      const node = ensure(id, i + 1);
+      parent.children.set(id, node);
+      parent = node;
+    }
+    parent.peer = p;
+  }
+  const last = id => id === "" ? -1 : parseInt(id.slice(id.lastIndexOf(".") + 1), 10);
+  for (const n of nodes.values()) {
+    n.children = [...n.children.values()].sort((a, b) => last(a.id) - last(b.id));
+  }
+  return nodes;
+}
+
+// Простая tidy-раскладка: листья через равные промежутки,
+// родитель по центру своих детей, уровень = глубина.
+function layout(nodes) {
+  const ROW = 26, COL = 160;
+  let leaf = 0;
+  const walk = n => {
+    if (n.children.length === 0) n.y = leaf++ * ROW;
+    else {
+      for (const c of n.children) walk(c);
+      n.y = (n.children[0].y + n.children[n.children.length - 1].y) / 2;
+    }
+    n.x = n.depth * COL;
+  };
+  walk(nodes.get(""));
+  return { ROW, COL };
+}
+
+// ---------- отрисовка ----------
+
+let vb = null; // текущий viewBox {x,y,w,h}
+
+function kind(n) { return n.id === "" ? "rootn" : (n.peer ? "peer" : "dot"); }
+
+function render(d) {
+  const nodes = buildNodes(d.peers);
+  layout(nodes);
+
+  let edges = "", circles = "", labels = "";
+  for (const n of nodes.values()) {
+    const r = n.id === "" ? 6 : (n.peer ? 5 : 3.5);
+    for (const c of n.children) {
+      const midX = (n.x + c.x) / 2;
+      edges += `<path class="edge" d="M ${n.x + r} ${n.y} H ${midX} V ${c.y} H ${c.x - (c.id === "" ? 6 : c.peer ? 5 : 3.5)}"/>`;
+    }
+    const k = kind(n);
+    circles += `<circle class="node ${k}" data-id="${n.id}" cx="${n.x}" cy="${n.y}" r="${r}"/>`;
+    labels += `<text class="lbl ${k}" x="${n.x + r + 6}" y="${n.y + 3.5}">${n.id === "" ? "&quot;&quot;" : n.id}</text>`;
+  }
+  svg.innerHTML = edges + circles + labels;
+
+  const list = [...nodes.values()];
+  const peerCount = d.peers.length;
+  const dotCount = list.length - list.filter(n => n.peer).length;
+  const maxDepth = Math.max(...list.map(n => n.depth));
+  const ageMin = Math.max(0, Math.round((Date.now() / 1000 - d.as_of) / 60));
+  metaEl.innerHTML =
+    `<b>${peerCount}</b> пиров · ${dotCount} точек · глубина ${maxDepth}` +
+    ` · данные на ${new Date(d.as_of * 1000).toLocaleTimeString("ru-RU")} (${ageMin} мин назад)` +
+    `<span class="legend"><i class="sw" style="background:#fbbf24"></i>корень` +
+    `<i class="sw" style="background:#38bdf8"></i>публичный пир` +
+    `<i class="sw" style="background:#64748b"></i>точка</span>`;
+  fit(list);
+}
+
+function fit(nodes) {
+  const pad = 40;
+  const xs = nodes.map(n => n.x), ys = nodes.map(n => n.y);
+  vb = {
+    x: Math.min(...xs) - pad,
+    y: Math.min(...ys) - pad,
+    w: Math.max(...xs) - Math.min(...xs) + pad * 2,
+    h: Math.max(...ys) - Math.min(...ys) + pad * 2,
+  };
+  apply();
+}
+
+function apply() {
+  if (vb) svg.setAttribute("viewBox", `${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
+}
+
+// координаты указателя в системе SVG
+function svgPoint(e) {
+  const pt = svg.createSVGPoint();
+  pt.x = e.clientX; pt.y = e.clientY;
+  return pt.matrixTransform(svg.getScreenCTM().inverse());
+}
+
+svg.addEventListener("wheel", e => {
+  e.preventDefault();
+  const p = svgPoint(e);
+  const k = e.deltaY < 0 ? 1 / 1.15 : 1.15; // зум к курсору
+  vb = { x: p.x - (p.x - vb.x) * k, y: p.y - (p.y - vb.y) * k, w: vb.w * k, h: vb.h * k };
+  apply();
+}, { passive: false });
+
+let pan = null;
+svg.addEventListener("pointerdown", e => { pan = { x: e.clientX, y: e.clientY, vb: { ...vb } }; svg.classList.add("panning"); });
+window.addEventListener("pointermove", e => {
+  if (!pan) return;
+  const rect = svg.getBoundingClientRect();
+  const kx = vb.w / rect.width, ky = vb.h / rect.height;
+  vb = { ...pan.vb, x: pan.vb.x - (e.clientX - pan.x) * kx, y: pan.vb.y - (e.clientY - pan.y) * ky };
+  apply();
+});
+window.addEventListener("pointerup", () => { pan = null; svg.classList.remove("panning"); });
+svg.addEventListener("dblclick", () => location.reload());
+
+// тултип: только координаты и тип узла
+svg.addEventListener("pointermove", e => {
+  const t = e.target.closest("circle.node");
+  if (!t || pan) { tipEl.style.display = "none"; return; }
+  tipEl.textContent = `${t.dataset.id === "" ? '""' : t.dataset.id} — ` +
+    (t.classList.contains("rootn") ? "корень" : t.classList.contains("peer") ? "публичный пир" : "точка");
+  tipEl.style.display = "block";
+  tipEl.style.left = e.clientX + 14 + "px";
+  tipEl.style.top = e.clientY + 14 + "px";
+});
+svg.addEventListener("pointerleave", () => tipEl.style.display = "none");
+
+// ---------- жизненный цикл ----------
+
+async function refresh() {
+  try {
+    render(await load());
+  } catch (err) {
+    metaEl.innerHTML = `<span id="err">ошибка загрузки: ${err.message}</span>`;
+  }
+}
+
+document.getElementById("refresh").addEventListener("click", refresh);
+refresh();
+setInterval(refresh, REFRESH_MS);
+</script>
+</body>
+</html>
