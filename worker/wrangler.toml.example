@@ -8,8 +8,8 @@ compatibility_date = "2026-09-01"
 #   npx wrangler d1 create public-peers
 # и вписать возвращённый database_id.
 #
-# ВАЖНО: binding должен называться PUBLIC_PEERS — на это имя рассчитан код.
+# ВАЖНО: binding должен называться DB — на это имя рассчитан код.
 [[d1_databases]]
-binding = "PUBLIC_PEERS"
+binding = "DB"
 database_name = "public-peers"
 database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"

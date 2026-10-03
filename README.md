@@ -82,7 +82,7 @@ npm run deploy                           # URL вида https://ymonitor-api.<su
 
 `wrangler.toml` с реальным `database_id` не коммитится (в `.gitignore`);
 в репо лежит `wrangler.toml.example`. Binding должен называться
-`PUBLIC_PEERS` — на это имя рассчитан код.
+`DB` — на это имя рассчитан код.
 
 Локальная проверка без аккаунта: `cp .env.example .dev.vars 2>/dev/null; echo "INGEST_TOKEN=dev" > .dev.vars && npm run migrate:local && npm run dev` → http://localhost:8787.
 
