@@ -6,7 +6,8 @@ services:
     build:
       context: .
       dockerfile: deploy/Dockerfile
-    image: ymonitor:latest
+    # тот же тег, что публикует CI (GHCR), чтобы локальная сборка и pull совпадали
+    image: ghcr.io/drewcyber/public-peers-map:latest
     restart: unless-stopped
     environment:
       WORKER_URL: ${WORKER_URL:?set WORKER_URL in .env}

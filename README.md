@@ -1,5 +1,7 @@
 # ymonitor — мониторинг дерева публичных пиров Yggdrasil
 
+Репозиторий: https://github.com/DrewCyber/public-peers-map
+
 Коллектор опрашивает все публичные пиры сети Yggdrasil и складывает их текущие
 координаты (путь в дереве от корня) и историю их изменений в D1. Поверх —
 публичный JSON API на Cloudflare Worker: чтение без какой-либо авторизации,
@@ -96,7 +98,7 @@ docker run --rm \
   -e WORKER_URL=https://ymonitor-api.<sub>.workers.dev \
   -e INGEST_TOKEN=<токен> \
   -v ymonitor-data:/data \
-  ghcr.io/<owner>/ymonitor:latest -once
+  ghcr.io/drewcyber/public-peers-map:latest -once
 ```
 
 Без Docker: `go build ./cmd/ymonitor && WORKER_URL=... INGEST_TOKEN=... ./ymonitor`.

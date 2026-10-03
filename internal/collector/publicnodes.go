@@ -49,7 +49,7 @@ func FetchPublicNodes(ctx context.Context, url string) (PublicNodes, error) {
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "ymonitor (+https://github.com/yggdrasil)")
+	req.Header.Set("User-Agent", "ymonitor (+https://github.com/DrewCyber/public-peers-map)")
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
