@@ -33,6 +33,17 @@
   #tip { position: fixed; display: none; z-index: 10; pointer-events: none;
          background: #0f172a; border: 1px solid #334155; border-radius: 6px;
          padding: 4px 8px; font-size: 12px; white-space: pre; }
+  #card { position: fixed; display: none; z-index: 20;
+          background: #0f172a; border: 1px solid #334155; border-radius: 8px;
+          padding: 10px 12px; font-size: 12px; max-width: 360px;
+          box-shadow: 0 8px 24px rgba(0, 0, 0, .5); }
+  #card h3 { margin: 0 0 6px; font: 600 12px ui-monospace, monospace;
+             color: #7dd3fc; word-break: break-all; }
+  #card .v6 { color: #e2e8f0; font-family: ui-monospace, monospace; word-break: break-all; }
+  #card ul { margin: 6px 0 0; padding: 0; list-style: none; }
+  #card li { font-family: ui-monospace, monospace; color: #94a3b8;
+             padding: 2px 0; word-break: break-all; }
+  #card .err { color: #f87171; }
   #err { color: #f87171; }
 </style>
 </head>
@@ -44,6 +55,7 @@
 </header>
 <div id="wrap"><svg id="tree" xmlns="http://www.w3.org/2000/svg"></svg></div>
 <div id="tip"></div>
+<div id="card"></div>
 
 <script>
 "use strict";
@@ -127,7 +139,7 @@ function render(d) {
       edges += `<path class="edge" d="M ${n.x + r} ${n.y} H ${midX} V ${c.y} H ${c.x - (c.id === "" ? 6 : c.peer ? 5 : 3.5)}"/>`;
     }
     const k = kind(n);
-    circles += `<circle class="node ${k}" data-id="${n.id}" cx="${n.x}" cy="${n.y}" r="${r}"/>`;
+    circles += `<circle class="node ${k}" data-id="${n.id}" data-key="${n.peer ? n.peer.key : ""}" cx="${n.x}" cy="${n.y}" r="${r}"/>`;
     labels += `<text class="lbl ${k}" x="${n.x + r + 6}" y="${n.y + 3.5}">${n.id === "" ? "&quot;&quot;" : n.id}</text>`;
   }
   svg.innerHTML = edges + circles + labels;
@@ -177,10 +189,16 @@ svg.addEventListener("wheel", e => {
   apply();
 }, { passive: false });
 
-let pan = null;
-svg.addEventListener("pointerdown", e => { pan = { x: e.clientX, y: e.clientY, vb: { ...vb } }; svg.classList.add("panning"); });
+let pan = null, dragged = false;
+svg.addEventListener("pointerdown", e => {
+  dragged = false;
+  if (e.button !== 0) return;
+  pan = { x: e.clientX, y: e.clientY, vb: { ...vb } };
+  svg.classList.add("panning");
+});
 window.addEventListener("pointermove", e => {
   if (!pan) return;
+  if (Math.abs(e.clientX - pan.x) + Math.abs(e.clientY - pan.y) > 4) dragged = true;
   const rect = svg.getBoundingClientRect();
   const kx = vb.w / rect.width, ky = vb.h / rect.height;
   vb = { ...pan.vb, x: pan.vb.x - (e.clientX - pan.x) * kx, y: pan.vb.y - (e.clientY - pan.y) * ky };
@@ -200,6 +218,43 @@ svg.addEventListener("pointermove", e => {
   tipEl.style.top = e.clientY + 14 + "px";
 });
 svg.addEventListener("pointerleave", () => tipEl.style.display = "none");
+
+// ---------- карточка пира по клику ----------
+
+const cardEl = document.getElementById("card");
+
+function hideCard() { cardEl.style.display = "none"; }
+
+async function showCard(key, coords, x, y) {
+  cardEl.style.display = "block";
+  cardEl.style.left = Math.min(x + 14, window.innerWidth - 380) + "px";
+  cardEl.style.top = Math.min(y + 14, window.innerHeight - 220) + "px";
+  cardEl.innerHTML = `<h3>${coords === "" ? '""' : coords}</h3><div class="v6">загрузка…</div>`;
+  try {
+    const res = await fetch(API_URL + "/v1/peers/" + key, { cache: "no-store" });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const p = await res.json();
+    cardEl.innerHTML =
+      `<h3>${p.coords === "" || p.coords == null ? '""' : p.coords}</h3>` +
+      `<div class="v6">${p.ipv6}</div>` +
+      `<ul>${(p.endpoints || []).map(u => `<li>${u}</li>`).join("")}</ul>`;
+  } catch (err) {
+    cardEl.innerHTML = `<h3>${coords === "" ? '""' : coords}</h3>` +
+      `<div class="err">ошибка: ${err.message}</div>`;
+  }
+}
+
+svg.addEventListener("click", e => {
+  const t = e.target.closest("circle.node");
+  if (!t || dragged) return;         // клик после перетаскивания игнорируем
+  if (!t.dataset.key) { hideCard(); return; } // анонимная точка — данных нет
+  showCard(t.dataset.key, t.dataset.id, e.clientX, e.clientY);
+});
+
+document.addEventListener("click", e => {
+  if (!e.target.closest("#card") && !e.target.closest("circle.node")) hideCard();
+});
+document.addEventListener("keydown", e => { if (e.key === "Escape") hideCard(); });
 
 // ---------- жизненный цикл ----------
 
