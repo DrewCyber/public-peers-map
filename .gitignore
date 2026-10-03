@@ -1,0 +1,20 @@
+# collector runtime state
+/data/
+/.spike/
+/ymonitor
+/ymonitor-*
+
+# env
+.env
+worker/.dev.vars
+
+# node / wrangler
+worker/node_modules/
+worker/.wrangler/
+
+# misc
+*.log
+.DS_Store
+
+# local session artifacts
+.zcode/

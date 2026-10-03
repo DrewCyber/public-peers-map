@@ -1,0 +1,24 @@
+# ymonitor collector.
+# Put WORKER_URL and INGEST_TOKEN into .env (see deploy/.env.example), then:
+#   docker compose up -d
+services:
+  ymonitor:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+    image: ymonitor:latest
+    restart: unless-stopped
+    environment:
+      WORKER_URL: ${WORKER_URL:?set WORKER_URL in .env}
+      INGEST_TOKEN: ${INGEST_TOKEN:?set INGEST_TOKEN in .env}
+      # PEERS: "tcp://host:port,tls://host:port"   # default: auto-selected from the list
+      # POLL_INTERVAL: 5m        # also defines the default vanish window (3x)
+      # VANISH_AFTER: 15m
+      # HEARTBEAT_EVERY: 15m
+    volumes:
+      - ymonitor-data:/data
+    ports:
+      - "127.0.0.1:8080:8080" # health endpoint, localhost only
+
+volumes:
+  ymonitor-data:
