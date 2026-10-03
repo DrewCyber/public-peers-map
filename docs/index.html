@@ -8,7 +8,8 @@
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
   body { margin: 0; background: #0b1220; color: #cbd5e1;
-         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+         overscroll-behavior: none; }
   header { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
            padding: 10px 16px; border-bottom: 1px solid #1e293b; }
   h1 { font-size: 15px; font-weight: 600; margin: 0; color: #e2e8f0; }
@@ -20,7 +21,9 @@
              border-radius: 6px; padding: 4px 12px; font: inherit; font-size: 12px; cursor: pointer; }
   #refresh:hover { background: #334155; }
   #wrap { position: relative; }
-  svg { display: block; width: 100vw; height: calc(100vh - 43px); cursor: grab; }
+  svg { display: block; width: 100vw; height: calc(100vh - 43px); cursor: grab;
+        touch-action: none; /* жесты обрабатываем сами: пинч-зум и пан */
+        user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
   svg.panning { cursor: grabbing; }
   .edge { stroke: #334155; stroke-width: 1.2; fill: none; }
   circle.node { cursor: pointer; }
@@ -123,7 +126,8 @@ function layout(nodes) {
 
 // ---------- отрисовка ----------
 
-let vb = null; // текущий viewBox {x,y,w,h}
+let vb = null;        // текущий viewBox {x,y,w,h}
+let lastNodes = null; // для двойного клика/тапа — вписать дерево в экран
 
 function kind(n) { return n.id === "" ? "rootn" : (n.peer ? "peer" : "dot"); }
 
@@ -155,6 +159,7 @@ function render(d) {
     `<span class="legend"><i class="sw" style="background:#fbbf24"></i>корень` +
     `<i class="sw" style="background:#38bdf8"></i>публичный пир` +
     `<i class="sw" style="background:#64748b"></i>точка</span>`;
+  lastNodes = list;
   fit(list);
 }
 
@@ -174,43 +179,98 @@ function apply() {
   if (vb) svg.setAttribute("viewBox", `${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
 }
 
-// координаты указателя в системе SVG
-function svgPoint(e) {
+// координаты точки окна в системе SVG
+function svgPoint(x, y) {
   const pt = svg.createSVGPoint();
-  pt.x = e.clientX; pt.y = e.clientY;
+  pt.x = x; pt.y = y;
   return pt.matrixTransform(svg.getScreenCTM().inverse());
+}
+
+// зум в k раз вокруг точки (cx, cy) в координатах окна
+function zoomAt(cx, cy, k) {
+  const p = svgPoint(cx, cy);
+  vb = { x: p.x - (p.x - vb.x) * k, y: p.y - (p.y - vb.y) * k, w: vb.w * k, h: vb.h * k };
+  apply();
+}
+
+function panBy(dx, dy) { // сдвиг в пикселях окна
+  const rect = svg.getBoundingClientRect();
+  vb = { ...vb, x: vb.x - dx * (vb.w / rect.width), y: vb.y - dy * (vb.h / rect.height) };
+  apply();
 }
 
 svg.addEventListener("wheel", e => {
   e.preventDefault();
-  const p = svgPoint(e);
-  const k = e.deltaY < 0 ? 1 / 1.15 : 1.15; // зум к курсору
-  vb = { x: p.x - (p.x - vb.x) * k, y: p.y - (p.y - vb.y) * k, w: vb.w * k, h: vb.h * k };
-  apply();
+  zoomAt(e.clientX, e.clientY, e.deltaY < 0 ? 1 / 1.15 : 1.15);
 }, { passive: false });
 
-let pan = null, dragged = false;
-svg.addEventListener("pointerdown", e => {
-  dragged = false;
-  if (e.button !== 0) return;
-  pan = { x: e.clientX, y: e.clientY, vb: { ...vb } };
-  svg.classList.add("panning");
-});
-window.addEventListener("pointermove", e => {
-  if (!pan) return;
-  if (Math.abs(e.clientX - pan.x) + Math.abs(e.clientY - pan.y) > 4) dragged = true;
-  const rect = svg.getBoundingClientRect();
-  const kx = vb.w / rect.width, ky = vb.h / rect.height;
-  vb = { ...pan.vb, x: pan.vb.x - (e.clientX - pan.x) * kx, y: pan.vb.y - (e.clientY - pan.y) * ky };
-  apply();
-});
-window.addEventListener("pointerup", () => { pan = null; svg.classList.remove("panning"); });
-svg.addEventListener("dblclick", () => location.reload());
+// Мультитач: один указатель — пан, два — пинч-зум (+ пан серединой).
+// touch-action:none на svg не даёт браузеру перехватывать жесты.
+const pointers = new Map(); // pointerId -> {x,y}
+let panStart = null, pinchPrev = null, dragged = false;
 
-// тултип: только координаты и тип узла
+function pinchInfo() {
+  const [a, b] = [...pointers.values()];
+  return { dist: Math.hypot(a.x - b.x, a.y - b.y) || 1,
+           mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 } };
+}
+
+svg.addEventListener("pointerdown", e => {
+  if (e.pointerType === "mouse" && e.button !== 0) return;
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  dragged = false;
+  svg.classList.add("panning");
+  if (pointers.size === 1) {
+    panStart = { x: e.clientX, y: e.clientY, vb: { ...vb } };
+    pinchPrev = null;
+  } else if (pointers.size === 2) {
+    panStart = null;
+    pinchPrev = pinchInfo();
+  }
+});
+
+window.addEventListener("pointermove", e => {
+  if (!pointers.has(e.pointerId)) return;
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (pointers.size === 1 && panStart) {
+    const dx = e.clientX - panStart.x, dy = e.clientY - panStart.y;
+    if (Math.abs(dx) + Math.abs(dy) > 4) dragged = true;
+    const rect = svg.getBoundingClientRect();
+    vb = { ...panStart.vb,
+           x: panStart.vb.x - dx * (panStart.vb.w / rect.width),
+           y: panStart.vb.y - dy * (panStart.vb.h / rect.height) };
+    apply();
+  } else if (pointers.size >= 2 && pinchPrev) {
+    const cur = pinchInfo();
+    const k = pinchPrev.dist / cur.dist; // растяжение пальцев = приближение
+    if (Math.abs(k - 1) > 0.001) zoomAt(cur.mid.x, cur.mid.y, k);
+    panBy(cur.mid.x - pinchPrev.mid.x, cur.mid.y - pinchPrev.mid.y);
+    if (Math.abs(k - 1) > 0.01) dragged = true;
+    pinchPrev = cur;
+  }
+});
+
+function releasePointer(e) {
+  pointers.delete(e.pointerId);
+  if (pointers.size === 0) {
+    svg.classList.remove("panning");
+  } else if (pointers.size === 1) {
+    // жест закончился: оставшийся палец начинает новый пан
+    const [p] = [...pointers.values()];
+    panStart = { x: p.x, y: p.y, vb: { ...vb } };
+    pinchPrev = null;
+  }
+}
+window.addEventListener("pointerup", releasePointer);
+window.addEventListener("pointercancel", releasePointer);
+
+// двойной клик/тап — вписать дерево в экран
+svg.addEventListener("dblclick", () => { if (lastNodes) fit(lastNodes); });
+
+// тултип: только координаты и тип узла (скрываем во время жестов)
 svg.addEventListener("pointermove", e => {
   const t = e.target.closest("circle.node");
-  if (!t || pan) { tipEl.style.display = "none"; return; }
+  if (!t || pointers.size > 0) { tipEl.style.display = "none"; return; }
   tipEl.textContent = `${t.dataset.id === "" ? '""' : t.dataset.id} — ` +
     (t.classList.contains("rootn") ? "корень" : t.classList.contains("peer") ? "публичный пир" : "точка");
   tipEl.style.display = "block";
