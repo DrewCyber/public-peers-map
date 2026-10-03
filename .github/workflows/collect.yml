@@ -1,12 +1,11 @@
 name: collect
 
-# Пока только ручной запуск (Actions -> collect -> Run workflow).
-# Для автоматического опроса раскомментируйте schedule: значения
-# POLL_INTERVAL/VANISH_AFTER ниже уже подобраны под интервал 30 минут.
+# Автоматический сбор каждые 30 минут (по UTC) + ручной запуск.
+# POLL_INTERVAL=30m / VANISH_AFTER=90m в шаге ниже подобраны под этот интервал.
 on:
   workflow_dispatch: {}
-  # schedule:
-  #   - cron: '*/30 * * * *'
+  schedule:
+    - cron: '*/30 * * * *'
 
 concurrency:
   group: collect

@@ -116,9 +116,9 @@ docker run --rm \
 - Repository secret `INGEST_TOKEN`;
 - образ `ghcr.io/drewcyber/public-peers-map:latest` (публикуется CI из `main`).
 
-Параметры `POLL_INTERVAL=30m` / `VANISH_AFTER=90m` в workflow подобраны под
-будущий автоматический запуск раз в 30 минут — для перехода на него
-раскомментируйте блок `schedule` в файле workflow.
+Workflow запускается автоматически каждые 30 минут (cron, время UTC) и
+вручную (Actions → collect → Run workflow); `POLL_INTERVAL=30m` /
+`VANISH_AFTER=90m` в шаге ниже подобраны под этот интервал.
 
 Не запускайте демон и `-once` одновременно — события задвоятся (дедуп
 защитит от дублей, но не от лишних циклов).
