@@ -378,7 +378,6 @@ function renderMap() {
     `<i class="sw" style="background:#38bdf8"></i>${T().peer}` +
     `<i class="sw" style="background:#64748b"></i>${T().dot}</span>`;
   lastNodes = [...nodes.values()];
-  if (needFit) { fit(lastNodes); needFit = false; }
 }
 
 // ---------- таймлайн ----------
@@ -772,7 +771,9 @@ async function refresh() {
   try {
     await load();
     renderAll();
-    if (needFit) { fit(lastNodes); needFit = false; }
+    // вписываем дерево в экран при первом появлении данных; applyLang и
+    // автообновления вид не сбрасывают (needFit гасится только здесь)
+    if (needFit && lastNodes && lastNodes.length > 1) { fit(lastNodes); needFit = false; }
   } catch (err) {
     metaEl.innerHTML = `<span id="err">${T().error}: ${err.message}</span>`;
   }
