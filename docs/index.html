@@ -610,13 +610,16 @@ svg.addEventListener("pointerleave", () => tipEl.style.display = "none");
 
 // ---------- карточка пира (полностью локальная) ----------
 
-function hideCard() { cardEl.style.display = "none"; pinned = null; }
+function hideCard() { cardEl.style.display = "none"; pinned = null; pinScreen = null; }
 
 // закреплённый за карточкой пир: при листании таймлайна следуем за ним
 // по ключу (identity), а не по координатам; окно информации при этом скрыто,
 // зум не меняется — вид сдвигается так, чтобы пир остался в той же точке
-// экрана, где был до переключения
+// экрана, где был до переключения. Если пир в каком-то состоянии отсутствует,
+// его экранная точка помнится (pinScreen) и он возвращается на неё,
+// когда появляется снова
 let pinned = null;
+let pinScreen = null; // {x, y} в client-координатах, где пира видели последний раз
 
 function glyphOf(key) {
   return svg.querySelector(`circle.node[data-key="${key}"], text.flagnode[data-key="${key}"]`);
@@ -628,14 +631,15 @@ function captureAnchor() {
   const el = glyphOf(pinned);
   if (!el) return null;
   const b = el.getBoundingClientRect();
+  pinScreen = { x: b.x + b.width / 2, y: b.y + b.height / 2 };
   const pt = svg.createSVGPoint();
-  pt.x = b.x + b.width / 2; pt.y = b.y + b.height / 2;
+  pt.x = pinScreen.x; pt.y = pinScreen.y;
   return pt.matrixTransform(svg.getScreenCTM().inverse());
 }
 
 function followPinned(anchor) {
   if (!pinned) return;
-  if (currentState().get(pinned) === undefined) return; // пира нет в этом состоянии
+  if (currentState().get(pinned) === undefined) return; // пира нет и в этом состоянии
   const el = glyphOf(pinned);
   if (!el) return;
   const p = glyphPos(el);
@@ -643,10 +647,19 @@ function followPinned(anchor) {
     // зум прежний: сдвигаем вид на дельту новой позиции пира
     vb = { ...vb, x: vb.x + (p.x - anchor.x), y: vb.y + (p.y - anchor.y) };
     apply();
-    pulseAt(p.x, p.y);
+  } else if (pinScreen) {
+    // пира не было на прошлом состоянии — возвращаем на запомненную
+    // экранную точку, зум по-прежнему не трогаем
+    const pt = svg.createSVGPoint();
+    pt.x = pinScreen.x; pt.y = pinScreen.y;
+    const q = pt.matrixTransform(svg.getScreenCTM().inverse());
+    vb = { ...vb, x: vb.x + (p.x - q.x), y: vb.y + (p.y - q.y) };
+    apply();
   } else {
     highlight(currentState().get(pinned)); // опорной точки не было — центрируем
+    return;
   }
+  pulseAt(p.x, p.y);
 }
 
 function placeCard(x, y) {
