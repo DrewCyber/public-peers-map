@@ -90,19 +90,20 @@
 </head>
 <body>
 <header>
-  <h1>Дерево публичных пиров Yggdrasil</h1>
+  <h1 id="h1">Дерево публичных пиров Yggdrasil</h1>
   <div id="meta">загрузка…</div>
-  <label class="opt" title="Подсветить пиры, сменившие координаты с предыдущего состояния">
-    <input type="checkbox" id="opt-diff"> изменения
+  <label class="opt" id="lbl-diff-box" title="Подсветить пиры, сменившие координаты с предыдущего состояния">
+    <input type="checkbox" id="opt-diff"> <span id="lbl-diff">изменения</span>
   </label>
-  <label class="opt" title="Показывать флаг страны вместо точки пира">
-    <input type="checkbox" id="opt-flags" checked> флаги
+  <label class="opt" id="lbl-flags-box" title="Показывать флаг страны вместо точки пира">
+    <input type="checkbox" id="opt-flags" checked> <span id="lbl-flags">флаги</span>
   </label>
   <div id="search">
     <input id="q" type="search" placeholder="поиск"
            autocomplete="off" spellcheck="false">
     <div id="results"></div>
   </div>
+  <button id="lang" type="button" title="Switch language">EN</button>
   <button id="refresh" title="Обновить данные сейчас">Обновить</button>
 </header>
 <div id="wrap"><svg id="tree" xmlns="http://www.w3.org/2000/svg"></svg></div>
@@ -152,6 +153,44 @@ const flagOf = country => {
 
 // отображение координат: корень показываем как "0" (в данных он "")
 const dispC = c => c === "" ? "0" : c;
+
+// ---------- язык (RU/EN) ----------
+
+const I18N = {
+  ru: {
+    title: "Дерево публичных пиров Yggdrasil",
+    changes: "изменения", flags: "флаги",
+    changesTitle: "Подсветить пиры, сменившие координаты с предыдущего состояния",
+    flagsTitle: "Показывать флаг страны вместо точки пира",
+    search: "поиск", refresh: "Обновить", refreshTitle: "Обновить данные сейчас",
+    peers: "пиров", live: "сейчас", dataAsOf: "данные на",
+    root: "корень", changed: "изменилось", peer: "пир", dot: "точка",
+    publicPeer: "публичный пир", noHistory: "истории пока нет",
+    tPrev: "Предыдущее состояние (←)", tNext: "Следующее состояние (→)",
+    tLive: "К текущему состоянию", tIn: "Приблизить", tOut: "Отдалить",
+    tFit: "Вписать в экран", loading: "загрузка…", error: "ошибка загрузки",
+  },
+  en: {
+    title: "Yggdrasil public peers tree",
+    changes: "changes", flags: "flags",
+    changesTitle: "Highlight peers that changed coordinates since the previous state",
+    flagsTitle: "Show the country flag instead of the peer dot",
+    search: "search", refresh: "Refresh", refreshTitle: "Refresh data now",
+    peers: "peers", live: "live", dataAsOf: "data as of",
+    root: "root", changed: "changed", peer: "peer", dot: "dot",
+    publicPeer: "public peer", noHistory: "no history yet",
+    tPrev: "Previous state (←)", tNext: "Next state (→)",
+    tLive: "Back to the live state", tIn: "Zoom in", tOut: "Zoom out",
+    tFit: "Fit to screen", loading: "loading…", error: "failed to load",
+  },
+};
+let LANG = "ru";
+try {
+  LANG = localStorage.getItem("ymonitor-lang") ||
+         (navigator.language && navigator.language.toLowerCase().startsWith("ru") ? "ru" : "en");
+} catch { /* приватный режим */ }
+const T = () => I18N[LANG];
+const LOC = () => (LANG === "ru" ? "ru-RU" : "en-GB");
 
 // ---------- состояние ----------
 
@@ -331,13 +370,13 @@ function renderMap() {
     dmeta = ` · <b>+${ap}</b> <b>−${va}</b> <b>~${mo}</b>`;
   }
   const when = sel === null
-    ? `сейчас · данные на ${new Date(asOf * 1000).toLocaleString("ru-RU")}`
-    : new Date(points[sel] * 1000).toLocaleString("ru-RU");
-  metaEl.innerHTML = `<b>${peers.length}</b> пиров · ${when}${dmeta}` +
-    `<span class="legend"><i class="sw" style="background:#fbbf24"></i>корень` +
-    `<i class="sw" style="background:#fb923c"></i>изменилось` +
-    `<i class="sw" style="background:#38bdf8"></i>пир` +
-    `<i class="sw" style="background:#64748b"></i>точка</span>`;
+    ? `${T().live} · ${T().dataAsOf} ${new Date(asOf * 1000).toLocaleString(LOC())}`
+    : new Date(points[sel] * 1000).toLocaleString(LOC());
+  metaEl.innerHTML = `<b>${peers.length}</b> ${T().peers} · ${when}${dmeta}` +
+    `<span class="legend"><i class="sw" style="background:#fbbf24"></i>${T().root}` +
+    `<i class="sw" style="background:#fb923c"></i>${T().changed}` +
+    `<i class="sw" style="background:#38bdf8"></i>${T().peer}` +
+    `<i class="sw" style="background:#64748b"></i>${T().dot}</span>`;
   lastNodes = [...nodes.values()];
   if (needFit) { fit(lastNodes); needFit = false; }
 }
@@ -369,7 +408,7 @@ function renderTimeline() {
     bars += `<text x="${pad}" y="10" class="axt">${fmtDate(points[0])}</text>`;
     bars += `<text x="${W - pad}" y="10" class="axt" text-anchor="end">${fmtDate(points[n - 1])}</text>`;
   } else {
-    bars = `<text x="${W / 2}" y="${H / 2}" class="axt" text-anchor="middle">истории пока нет</text>`;
+    bars = `<text x="${W / 2}" y="${H / 2}" class="axt" text-anchor="middle">${T().noHistory}</text>`;
   }
   tlsvg.setAttribute("viewBox", `0 0 ${W} ${H}`);
   tlsvg.innerHTML = bars;
@@ -383,8 +422,8 @@ function fmtDate(ts) {
   const d = new Date(ts * 1000);
   const now = new Date();
   const sameDay = d.toDateString() === now.toDateString();
-  return sameDay ? d.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })
-                : d.toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit" });
+  return sameDay ? d.toLocaleTimeString(LOC(), { hour: "2-digit", minute: "2-digit" })
+                : d.toLocaleDateString(LOC(), { day: "2-digit", month: "2-digit" });
 }
 
 tlsvg.addEventListener("click", e => {
@@ -428,9 +467,17 @@ function zoomAt(cx, cy, k) {
 }
 
 let svgRect = null; // кэш размеров на время жеста
+// Настоящий масштаб px -> единицы viewBox берём из CTM: он учитывает
+// preserveAspectRatio. При «высоком» дереве в широком окне возникает
+// леттербоксинг, отношения vb.w/width и vb.h/height различаются, и пан по
+// одной из осей ехал медленнее мыши.
+function vbScale() {
+  const m = svg.getScreenCTM();
+  return { kx: 1 / m.a, ky: 1 / m.d };
+}
 function panBy(dx, dy) {
-  const r = svgRect || svg.getBoundingClientRect();
-  vb = { ...vb, x: vb.x - dx * (vb.w / r.width), y: vb.y - dy * (vb.h / r.height) };
+  const s = vbScale();
+  vb = { ...vb, x: vb.x - dx * s.kx, y: vb.y - dy * s.ky };
   scheduleApply();
 }
 
@@ -455,8 +502,8 @@ svg.addEventListener("pointerdown", e => {
   svg.classList.add("panning");
   if (!svgRect) svgRect = svg.getBoundingClientRect();
   if (pointers.size === 1) {
-    panStart = { x: e.clientX, y: e.clientY, vb: { ...vb },
-                 kx: vb.w / svgRect.width, ky: vb.h / svgRect.height };
+    const s = vbScale();
+    panStart = { x: e.clientX, y: e.clientY, vb: { ...vb }, kx: s.kx, ky: s.ky };
     pinchPrev = null;
   } else if (pointers.size === 2) { panStart = null; pinchPrev = pinchInfo(); }
 });
@@ -482,9 +529,8 @@ function releasePointer(e) {
   if (pointers.size === 0) { svg.classList.remove("panning"); svgRect = null; }
   else if (pointers.size === 1) {
     const [p] = [...pointers.values()];
-    panStart = { x: p.x, y: p.y, vb: { ...vb } };
-    panStart.kx = vb.w / (svgRect?.width || svg.getBoundingClientRect().width);
-    panStart.ky = vb.h / (svgRect?.height || svg.getBoundingClientRect().height);
+    const s = vbScale();
+    panStart = { x: p.x, y: p.y, vb: { ...vb }, kx: s.kx, ky: s.ky };
     pinchPrev = null;
   }
 }
@@ -505,7 +551,7 @@ svg.addEventListener("pointermove", e => {
   const t = e.target.closest("circle.node, text.flagnode");
   if (!t || pointers.size > 0) { tipEl.style.display = "none"; return; }
   tipEl.textContent = `${dispC(t.dataset.id)} — ` +
-    (t.dataset.id === "" ? "корень" : t.classList.contains("dot") ? "точка" : "публичный пир");
+    (t.dataset.id === "" ? T().root : t.classList.contains("dot") ? T().dot : T().publicPeer);
   tipEl.style.display = "block";
   tipEl.style.left = e.clientX + 14 + "px";
   tipEl.style.top = e.clientY + 14 + "px";
@@ -692,13 +738,43 @@ document.addEventListener("click", e => {
 let needFit = true;
 function renderAll() { renderMap(); renderTimeline(); }
 
+// применяем язык ко всем статичным строкам и перерисовываем динамику
+function applyLang() {
+  const t = T();
+  document.documentElement.lang = LANG;
+  document.title = t.title;
+  document.getElementById("h1").textContent = t.title;
+  document.getElementById("lbl-diff").textContent = t.changes;
+  document.getElementById("lbl-diff-box").title = t.changesTitle;
+  document.getElementById("lbl-flags").textContent = t.flags;
+  document.getElementById("lbl-flags-box").title = t.flagsTitle;
+  document.getElementById("q").placeholder = t.search;
+  const r = document.getElementById("refresh");
+  r.textContent = t.refresh; r.title = t.refreshTitle;
+  document.getElementById("golive").textContent = t.live;
+  document.getElementById("prev").title = t.tPrev;
+  document.getElementById("next").title = t.tNext;
+  document.getElementById("golive").title = t.tLive;
+  document.getElementById("zin").title = t.tIn;
+  document.getElementById("zout").title = t.tOut;
+  document.getElementById("zfit").title = t.tFit;
+  document.getElementById("lang").textContent = LANG === "ru" ? "EN" : "RU";
+  renderAll();
+}
+document.getElementById("lang").addEventListener("click", () => {
+  LANG = LANG === "ru" ? "en" : "ru";
+  try { localStorage.setItem("ymonitor-lang", LANG); } catch {}
+  applyLang();
+});
+applyLang();
+
 async function refresh() {
   try {
     await load();
     renderAll();
     if (needFit) { fit(lastNodes); needFit = false; }
   } catch (err) {
-    metaEl.innerHTML = `<span id="err">ошибка загрузки: ${err.message}</span>`;
+    metaEl.innerHTML = `<span id="err">${T().error}: ${err.message}</span>`;
   }
 }
 
