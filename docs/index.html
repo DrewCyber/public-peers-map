@@ -78,6 +78,8 @@
   #card h3 { margin: 0 0 6px; font: 600 12px ui-monospace, monospace;
              color: #7dd3fc; word-break: break-all; }
   #card .v6 { color: #e2e8f0; font-family: ui-monospace, monospace; word-break: break-all; }
+  #card .pk { color: #64748b; font-family: ui-monospace, monospace; font-size: 11px;
+              word-break: break-all; margin-top: 2px; }
   #card .cty { color: #fde68a; }
   #card ul { margin: 6px 0 0; padding: 0; list-style: none; }
   #card li { font-family: ui-monospace, monospace; color: #94a3b8;
@@ -612,6 +614,7 @@ function showCard(key, coords, x, y) {
     `<h3>${dispC(coords)}</h3>` +
     (r.country ? `<div class="cty">${flag ? flag + " " : ""}${r.country}</div>` : "") +
     `<div class="v6">${r.ipv6}</div>` +
+    `<div class="pk">${key}</div>` +
     `<ul>${r.endpoints.map(u => `<li>${u}</li>`).join("")}</ul>`;
   placeCard(x, y);
 }
