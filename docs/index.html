@@ -230,7 +230,9 @@ async function load() {
     else if (e.old_coords && coordsIndex.get(e.old_coords) === e.peer_key) { /* оставим прошлую */ }
   }
   for (const [k, c] of cur) coordsIndex.set(c, k);
-  sel = null;
+  // последний столбик таймлайна и есть «сейчас»: последних данных свежее нет,
+  // потокового обновления не существует — сразу выбираем его
+  sel = points.length ? points.length - 1 : null;
 }
 
 // Состояние на i-й точке таймлайна: перемотка журнала вперёд до points[i].
@@ -250,21 +252,17 @@ function stateAtPoint(i) {
 
 function currentState() { return sel === null ? cur : stateAtPoint(sel); }
 
-// индекс выбранного состояния в виртуальном ряду [p0..pN-1, live]
-function selIndex() { return sel === null ? points.length : sel; }
+// выбранная точка таймлайна; null только пока истории нет вообще
+function selIndex() { return sel ?? 0; }
 function selectIndex(i) {
   if (points.length === 0) { sel = null; }
-  else if (i >= points.length) { sel = null; }
-  else { sel = Math.max(0, i); }
+  else { sel = Math.min(points.length - 1, Math.max(0, i)); }
   renderAll();
 }
 
 function prevDiff() { // состояние предыдущей точки для подсветки изменений
-  if (points.length === 0) return null;
-  let i = selIndex();
-  if (sel === null) i = points.length - 1; // «сейчас» = последний ts
-  if (i <= 0) return null;
-  return stateAtPoint(i - 1);
+  if (points.length === 0 || sel === null || sel <= 0) return null;
+  return stateAtPoint(sel - 1);
 }
 
 // ---------- построение дерева (как раньше, из префиксов координат) ----------
@@ -370,7 +368,7 @@ function renderMap() {
     dmeta = ` · <b>+${ap}</b> <b>−${va}</b> <b>~${mo}</b>`;
   }
   const when = sel === null
-    ? `${T().live} · ${T().dataAsOf} ${new Date(asOf * 1000).toLocaleString(LOC())}`
+    ? T().noHistory
     : new Date(points[sel] * 1000).toLocaleString(LOC());
   metaEl.innerHTML = `<b>${peers.length}</b> ${T().peers} · ${when}${dmeta}` +
     `<span class="legend"><i class="sw" style="background:#fbbf24"></i>${T().root}` +
@@ -412,9 +410,11 @@ function renderTimeline() {
   tlsvg.setAttribute("viewBox", `0 0 ${W} ${H}`);
   tlsvg.innerHTML = bars;
 
+  // за последним столбиком ничего нет — next и «сейчас» на нём гаснут
+  const atLast = points.length === 0 || selIndex() >= points.length - 1;
   document.getElementById("prev").disabled = selIndex() === 0;
-  document.getElementById("next").disabled = selIndex() >= points.length;
-  document.getElementById("golive").disabled = points.length > 0 && sel === points.length - 1;
+  document.getElementById("next").disabled = atLast;
+  document.getElementById("golive").disabled = atLast;
 }
 
 function fmtDate(ts) {
@@ -526,9 +526,9 @@ window.addEventListener("pointermove", e => {
   if (!pointers.has(e.pointerId)) return;
   pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
   if (zoomDrag && pointers.size === 1) {
-    // вверх = приблизить (как на Яндекс/Google картах); коэффициент
-    // считается от начального вида жеста, без накопления ошибки
-    const k = Math.exp((e.clientY - zoomDrag.y0) / 250);
+    // вниз = приблизить, вверх = отдалить; коэффициент считается от
+    // начального вида жеста, без накопления ошибки
+    const k = Math.exp((zoomDrag.y0 - e.clientY) / 250);
     vb = { x: zoomDrag.ax - (zoomDrag.ax - zoomDrag.vb.x) * k,
            y: zoomDrag.ay - (zoomDrag.ay - zoomDrag.vb.y) * k,
            w: zoomDrag.vb.w * k, h: zoomDrag.vb.h * k };
@@ -691,14 +691,11 @@ qEl.addEventListener("keydown", e => {
 // прыжок к ноде: выбрать состояние, где нода в этих координатах, центрировать и подсветить
 function jumpTo(key, coords) {
   if (coords === undefined || coords === null) return;
-  let target = null; // null = живое состояние
-  if (cur.get(key) !== coords) {
-    target = -1; // не нашли подходящего исторического состояния
-    for (let i = points.length - 1; i >= 0; i--) {
-      if (stateAtPoint(i).get(key) === coords) { target = i; break; }
-    }
+  let target = points.length - 1; // не нашли в истории — последнее состояние
+  for (let i = points.length - 1; i >= 0; i--) {
+    if (stateAtPoint(i).get(key) === coords) { target = i; break; }
   }
-  if (target !== -1 && sel !== target) { sel = target; renderAll(); }
+  if (sel !== target) { sel = target; renderAll(); }
   highlight(coords);
 }
 
