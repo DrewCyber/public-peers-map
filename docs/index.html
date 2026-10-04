@@ -82,8 +82,14 @@
               word-break: break-all; margin-top: 2px; }
   #card .cty { color: #fde68a; }
   #card ul { margin: 6px 0 0; padding: 0; list-style: none; }
-  #card li { font-family: ui-monospace, monospace; color: #94a3b8;
-             padding: 2px 0; word-break: break-all; }
+  #card li { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
+  #card li .ep { font-family: ui-monospace, monospace; color: #94a3b8;
+                 word-break: break-all; flex: 1 1 auto; }
+  #card li .cp { flex: none; background: #1e293b; color: #94a3b8;
+                 border: 1px solid #334155; border-radius: 5px;
+                 font: 11px/1 system-ui, sans-serif; padding: 3px 6px; cursor: pointer; }
+  #card li .cp:hover { background: #334155; color: #e2e8f0; }
+  #card li .cp.done { color: #4ade80; border-color: #4ade80; }
   #card .err { color: #f87171; }
   #err { color: #f87171; }
   .sw { display: inline-block; width: 9px; height: 9px; border-radius: 50%;
@@ -165,6 +171,7 @@ const I18N = {
     changesTitle: "Подсветить пиры, сменившие координаты с предыдущего состояния",
     flagsTitle: "Показывать флаг страны вместо точки пира",
     search: "поиск", refresh: "Обновить", refreshTitle: "Обновить данные сейчас",
+    copy: "Копировать",
     peers: "пиров", live: "сейчас", dataAsOf: "данные на",
     root: "корень", changed: "изменилось", peer: "пир", dot: "точка",
     publicPeer: "публичный пир", noHistory: "истории пока нет",
@@ -178,6 +185,7 @@ const I18N = {
     changesTitle: "Highlight peers that changed coordinates since the previous state",
     flagsTitle: "Show the country flag instead of the peer dot",
     search: "search", refresh: "Refresh", refreshTitle: "Refresh data now",
+    copy: "Copy",
     peers: "peers", live: "live", dataAsOf: "data as of",
     root: "root", changed: "changed", peer: "peer", dot: "dot",
     publicPeer: "public peer", noHistory: "no history yet",
@@ -260,6 +268,7 @@ function selectIndex(i) {
   if (points.length === 0) { sel = null; }
   else { sel = Math.min(points.length - 1, Math.max(0, i)); }
   renderAll();
+  followPinned(); // закреплённый пир следует за переключением состояния
 }
 
 function prevDiff() { // состояние предыдущей точки для подсветки изменений
@@ -512,7 +521,7 @@ svg.addEventListener("pointerdown", e => {
       const pt = svg.createSVGPoint();
       pt.x = e.clientX; pt.y = e.clientY;
       const p = pt.matrixTransform(svg.getScreenCTM().inverse());
-      zoomDrag = { y0: e.clientY, ax: p.x, ay: p.y, vb: { ...vb } };
+      zoomDrag = { y0: e.clientY, ax: p.x, ay: p.y, vb: { ...vb }, moved: false };
       dragged = true; // жест не должен открывать карточку
       hideCard();
       lastTap = null;
@@ -530,6 +539,7 @@ window.addEventListener("pointermove", e => {
   if (zoomDrag && pointers.size === 1) {
     // вниз = приблизить, вверх = отдалить; коэффициент считается от
     // начального вида жеста, без накопления ошибки
+    if (Math.abs(e.clientY - zoomDrag.y0) > 2) zoomDrag.moved = true;
     const k = Math.exp((zoomDrag.y0 - e.clientY) / 250);
     vb = { x: zoomDrag.ax - (zoomDrag.ax - zoomDrag.vb.x) * k,
            y: zoomDrag.ay - (zoomDrag.ay - zoomDrag.vb.y) * k,
@@ -554,6 +564,8 @@ function releasePointer(e) {
   if (pointers.size === 0) {
     svg.classList.remove("panning");
     svgRect = null;
+    // после жеста зума браузер досылает dblclick — не зумим второй раз
+    if (zoomDrag && zoomDrag.moved) suppressDblUntil = performance.now() + 600;
     zoomDrag = null;
     if (!dragged) lastTap = { x: e.clientX, y: e.clientY, t: performance.now() };
   } else if (pointers.size === 1) {
@@ -569,7 +581,9 @@ window.addEventListener("pointercancel", releasePointer);
 window.addEventListener("resize", () => { svgRect = null; });
 
 // двойной тап/клик — приблизить в месте нажатия (вписать в экран — кнопка ⤢)
+let suppressDblUntil = 0;
 svg.addEventListener("dblclick", e => {
+  if (performance.now() < suppressDblUntil) return;
   hideCard();
   zoomAt(e.clientX, e.clientY, 1 / 1.7);
 });
@@ -594,7 +608,19 @@ svg.addEventListener("pointerleave", () => tipEl.style.display = "none");
 
 // ---------- карточка пира (полностью локальная) ----------
 
-function hideCard() { cardEl.style.display = "none"; }
+function hideCard() { cardEl.style.display = "none"; pinned = null; }
+
+// закреплённый за карточкой пир: при листании таймлайна следуем за ним
+// по ключу (identity), а не по координатам
+let pinned = null;
+
+function followPinned() {
+  if (!pinned) return;
+  const c = currentState().get(pinned);
+  if (c === undefined) return; // пира нет в этом состоянии
+  highlight(c);
+  if (cardEl.style.display === "block") cardEl.querySelector("h3").textContent = dispC(c);
+}
 
 function placeCard(x, y) {
   cardEl.style.display = "block";
@@ -609,15 +635,29 @@ function placeCard(x, y) {
 function showCard(key, coords, x, y) {
   const r = registry.get(key);
   if (!r) return;
+  pinned = key;
   const flag = flagOf(r.country);
   cardEl.innerHTML =
     `<h3>${dispC(coords)}</h3>` +
     (r.country ? `<div class="cty">${flag ? flag + " " : ""}${r.country}</div>` : "") +
     `<div class="v6">${r.ipv6}</div>` +
     `<div class="pk">${key}</div>` +
-    `<ul>${r.endpoints.map(u => `<li>${u}</li>`).join("")}</ul>`;
+    `<ul>${r.endpoints.map(u =>
+      `<li><span class="ep">${u}</span><button class="cp" type="button" title="${T().copy}">⧉</button></li>`).join("")}</ul>`;
   placeCard(x, y);
 }
+
+// копирование эндпоинта в буфер обмена
+cardEl.addEventListener("click", async e => {
+  const b = e.target.closest("button.cp");
+  if (!b) return;
+  try {
+    await navigator.clipboard.writeText(b.closest("li").querySelector(".ep").textContent);
+    b.classList.add("done");
+    b.textContent = "✓";
+    setTimeout(() => { b.classList.remove("done"); b.textContent = "⧉"; }, 1200);
+  } catch { /* буфер недоступен (небезопасный контекст) */ }
+});
 
 svg.addEventListener("click", e => {
   const t = e.target.closest("circle.node, text.lbl, text.flagnode");
@@ -763,7 +803,11 @@ document.addEventListener("keydown", e => {
   else if (e.key === "Escape") hideCard();
 });
 document.addEventListener("click", e => {
+  // клик по столбику пересобирает таймлайн во время всплытия события:
+  // target к этому моменту уже отсоединён от DOM — не считаем это «кликом мимо»
+  if (!e.target.isConnected) return;
   if (!e.target.closest("#card") && !e.target.closest("#controls") &&
+      !e.target.closest("#tl") && // навигация по таймлайну не закрывает карточку
       !e.target.closest("circle.node") && !e.target.closest("text.lbl") &&
       !e.target.closest("text.flagnode") && !e.target.closest("#search")) hideCard();
 });

@@ -1,11 +1,13 @@
 name: collect
 
 # Автоматический сбор каждые 30 минут (по UTC) + ручной запуск.
-# POLL_INTERVAL=30m / VANISH_AFTER=90m в шаге ниже подобраны под этот интервал.
+# Минуты 17/47 выбраны НЕ на границе получаса: cron на :00/:30 у GitHub
+# сильно задерживается и отбрасывается в часы пиковой нагрузки.
+# POLL_INTERVAL=30m / VANISH_AFTER=90m в шаге ниже подобраны под интервал.
 on:
   workflow_dispatch: {}
   schedule:
-    - cron: '*/30 * * * *'
+    - cron: '17,47 * * * *'
 
 concurrency:
   group: collect
