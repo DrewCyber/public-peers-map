@@ -46,7 +46,6 @@
   circle.peerc  { fill: #fb923c; }  /* координаты изменились с прошлого ts */
   circle.rootn  { fill: #fbbf24; }
   text.flagnode { font-size: 15px; text-anchor: middle; cursor: pointer; }
-  circle.chgring { fill: none; stroke: #fb923c; stroke-width: 2; pointer-events: none; }
   text.lbl       { fill: #94a3b8; font-size: 11px; font-family: ui-monospace, monospace; }
   text.lbl.peer  { fill: #7dd3fc; cursor: pointer; }
   text.lbl.peerc { fill: #fdba74; cursor: pointer; }
@@ -150,6 +149,9 @@ const flagOf = country => {
   if (!code) return "";
   return String.fromCodePoint(...[...code].map(c => 0x1f1e6 + c.charCodeAt(0) - 65));
 };
+
+// отображение координат: корень показываем как "0" (в данных он "")
+const dispC = c => c === "" ? "0" : c;
 
 // ---------- состояние ----------
 
@@ -308,13 +310,11 @@ function renderMap() {
       edges += `<path class="edge" d="M ${n.x + r} ${n.y} H ${midX} V ${c.y} H ${c.x - cr}"/>`;
     }
     if (flag) {
-      if (changed) glyphs += `<circle class="chgring" cx="${n.x}" cy="${n.y}" r="10"/>`;
       glyphs += `<text class="flagnode" data-id="${n.id}" data-key="${n.key}" x="${n.x}" y="${n.y + 5}">${flag}</text>`;
     } else {
       glyphs += `<circle class="node ${k}" data-id="${n.id}" data-key="${n.key || ""}" cx="${n.x}" cy="${n.y}" r="${r}"/>`;
     }
-    const text = n.id === "" ? '""' : n.id;
-    labels += `<text class="lbl ${k}" data-id="${n.id}" data-key="${n.key || ""}" x="${n.x + r + 6}" y="${n.y + 3.5}">${text}</text>`;
+    labels += `<text class="lbl ${k}" data-id="${n.id}" data-key="${n.key || ""}" x="${n.x + r + 6}" y="${n.y + 3.5}">${dispC(n.id)}</text>`;
   }
   svg.innerHTML = edges + glyphs + labels;
 
@@ -504,7 +504,7 @@ document.getElementById("zfit").addEventListener("click", () => { if (lastNodes)
 svg.addEventListener("pointermove", e => {
   const t = e.target.closest("circle.node, text.flagnode");
   if (!t || pointers.size > 0) { tipEl.style.display = "none"; return; }
-  tipEl.textContent = `${t.dataset.id === "" ? '""' : t.dataset.id} — ` +
+  tipEl.textContent = `${dispC(t.dataset.id)} — ` +
     (t.dataset.id === "" ? "корень" : t.classList.contains("dot") ? "точка" : "публичный пир");
   tipEl.style.display = "block";
   tipEl.style.left = e.clientX + 14 + "px";
@@ -531,7 +531,7 @@ function showCard(key, coords, x, y) {
   if (!r) return;
   const flag = flagOf(r.country);
   cardEl.innerHTML =
-    `<h3>${coords === "" ? '""' : coords}</h3>` +
+    `<h3>${dispC(coords)}</h3>` +
     (r.country ? `<div class="cty">${flag ? flag + " " : ""}${r.country}</div>` : "") +
     `<div class="v6">${r.ipv6}</div>` +
     `<ul>${r.endpoints.map(u => `<li>${u}</li>`).join("")}</ul>`;
@@ -558,17 +558,18 @@ function searchIndex() {
     for (const u of v.endpoints) out.push({ tag: "адрес", text: u, key: k });
     if (v.country) out.push({ tag: "страна", text: v.country, key: k });
   }
-  for (const [c, k] of coordsIndex) out.push({ tag: "coords", text: c || '""', key: k, coords: c });
+  for (const [c, k] of coordsIndex) out.push({ tag: "coords", text: dispC(c), key: k, coords: c });
   return out;
 }
 
 function runSearch(q) {
   q = q.trim().toLowerCase();
   resEl.innerHTML = "";
-  if (q.length < 2) { resEl.style.display = "none"; return; }
-  const exact = coordsIndex.has(q) ? q : null;
+  if (!q.length) { resEl.style.display = "none"; return; }
+  let exact = coordsIndex.has(q) ? q : null;
+  if (exact === null && q === "0" && coordsIndex.has("")) exact = ""; // корень
   const hits = searchIndex().filter(it => it.text.toLowerCase().includes(q)).slice(0, 30);
-  if (exact) {
+  if (exact !== null) {
     // полное совпадение координат — сразу прыжок к ноде
     jumpTo(coordsIndex.get(exact), exact);
     if (hits.length) showResults(hits);
@@ -665,6 +666,19 @@ document.getElementById("golive").addEventListener("click", () => { sel = null; 
 
 document.addEventListener("keydown", e => {
   if (e.target === qEl) return;
+  // Ctrl/Cmd+F (в т.ч. русская раскладка — «а») и "/" — фокус в наш поиск
+  // вместо браузерного поиска по странице
+  if ((e.ctrlKey || e.metaKey) && ["f", "F", "а", "А"].includes(e.key)) {
+    e.preventDefault();
+    qEl.focus();
+    qEl.select();
+    return;
+  }
+  if (e.key === "/") {
+    e.preventDefault();
+    qEl.focus();
+    return;
+  }
   if (e.key === "ArrowLeft") selectIndex(selIndex() - 1);
   else if (e.key === "ArrowRight") selectIndex(selIndex() + 1);
   else if (e.key === "Escape") hideCard();
