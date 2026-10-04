@@ -265,10 +265,12 @@ function currentState() { return sel === null ? cur : stateAtPoint(sel); }
 // выбранная точка таймлайна; null только пока истории нет вообще
 function selIndex() { return sel ?? 0; }
 function selectIndex(i) {
+  const anchor = captureAnchor(); // где пир на экране сейчас — до перерисовки
   if (points.length === 0) { sel = null; }
   else { sel = Math.min(points.length - 1, Math.max(0, i)); }
+  cardEl.style.display = "none"; // листаем — окно пира скрываем, фиксация остаётся
   renderAll();
-  followPinned(); // закреплённый пир следует за переключением состояния
+  followPinned(anchor); // зум не меняем, пир остаётся в той же точке экрана
 }
 
 function prevDiff() { // состояние предыдущей точки для подсветки изменений
@@ -611,15 +613,40 @@ svg.addEventListener("pointerleave", () => tipEl.style.display = "none");
 function hideCard() { cardEl.style.display = "none"; pinned = null; }
 
 // закреплённый за карточкой пир: при листании таймлайна следуем за ним
-// по ключу (identity), а не по координатам
+// по ключу (identity), а не по координатам; окно информации при этом скрыто,
+// зум не меняется — вид сдвигается так, чтобы пир остался в той же точке
+// экрана, где был до переключения
 let pinned = null;
 
-function followPinned() {
+function glyphOf(key) {
+  return svg.querySelector(`circle.node[data-key="${key}"], text.flagnode[data-key="${key}"]`);
+}
+
+// экранная позиция закреплённого пира в единицах дерева (до перерисовки)
+function captureAnchor() {
+  if (!pinned) return null;
+  const el = glyphOf(pinned);
+  if (!el) return null;
+  const b = el.getBoundingClientRect();
+  const pt = svg.createSVGPoint();
+  pt.x = b.x + b.width / 2; pt.y = b.y + b.height / 2;
+  return pt.matrixTransform(svg.getScreenCTM().inverse());
+}
+
+function followPinned(anchor) {
   if (!pinned) return;
-  const c = currentState().get(pinned);
-  if (c === undefined) return; // пира нет в этом состоянии
-  highlight(c);
-  if (cardEl.style.display === "block") cardEl.querySelector("h3").textContent = dispC(c);
+  if (currentState().get(pinned) === undefined) return; // пира нет в этом состоянии
+  const el = glyphOf(pinned);
+  if (!el) return;
+  const p = glyphPos(el);
+  if (anchor) {
+    // зум прежний: сдвигаем вид на дельту новой позиции пира
+    vb = { ...vb, x: vb.x + (p.x - anchor.x), y: vb.y + (p.y - anchor.y) };
+    apply();
+    pulseAt(p.x, p.y);
+  } else {
+    highlight(currentState().get(pinned)); // опорной точки не было — центрируем
+  }
 }
 
 function placeCard(x, y) {
@@ -743,24 +770,32 @@ function jumpTo(key, coords) {
 }
 
 let hlTimer = null;
-function highlight(coords) {
-  const el = svg.querySelector(`circle.node[data-id="${CSS.escape(coords)}"], text.flagnode[data-id="${CSS.escape(coords)}"]`);
-  if (!el) return;
-  const cx = +(el.getAttribute("cx") ?? el.getAttribute("x"));
-  const cy = +(el.getAttribute("cy") ?? el.getAttribute("y"));
-  // центрируем окно на ноде
-  const rect = svg.getBoundingClientRect();
-  const w = Math.max(500, vb.w / 2.5), h = w * (rect.height / rect.width);
-  vb = { x: cx - w / 2, y: cy - h / 2, w, h };
-  apply();
+function pulseAt(x, y) { // пульсирующая подсветка узла (без смены вида)
   const old = svg.querySelector("circle.hl");
   if (old) old.remove();
   const hl = document.createElementNS("http://www.w3.org/2000/svg", "circle");
   hl.setAttribute("class", "hl");
-  hl.setAttribute("cx", cx); hl.setAttribute("cy", cy); hl.setAttribute("r", 14);
+  hl.setAttribute("cx", x); hl.setAttribute("cy", y); hl.setAttribute("r", 14);
   svg.appendChild(hl);
   clearTimeout(hlTimer);
   hlTimer = setTimeout(() => hl.remove(), 4000);
+}
+
+function glyphPos(el) { // центр глифа в системе дерева (у флага — не базовая линия)
+  const isText = el.tagName === "text";
+  return { x: +(el.getAttribute("cx") ?? el.getAttribute("x")),
+           y: +(el.getAttribute("cy") ?? el.getAttribute("y")) - (isText ? 5 : 0) };
+}
+
+function highlight(coords) { // центрировать на узле и подсветить (поиск)
+  const el = svg.querySelector(`circle.node[data-id="${CSS.escape(coords)}"], text.flagnode[data-id="${CSS.escape(coords)}"]`);
+  if (!el) return;
+  const { x: cx, y: cy } = glyphPos(el);
+  const rect = svg.getBoundingClientRect();
+  const w = Math.max(500, vb.w / 2.5), h = w * (rect.height / rect.width);
+  vb = { x: cx - w / 2, y: cy - h / 2, w, h };
+  apply();
+  pulseAt(cx, cy);
 }
 
 // ---------- переключатели, клавиатура, жизненный цикл ----------
