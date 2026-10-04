@@ -19,6 +19,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -75,8 +76,18 @@ func main() {
 	time.Sleep(15 * time.Second)
 
 	// Probe phase: one packet per keyed peer, paced; count answers.
+	// Note: answered peers are recorded from the notify callback itself —
+	// GetPaths() cannot be read at the end of a long run because the path
+	// cache expires ~1 minute after the last packet.
 	var notified atomic.Int64
-	node.SetPathNotify(func(ed25519.PublicKey) { notified.Add(1) })
+	var mu sync.Mutex
+	notifiedKeys := map[string]bool{}
+	node.SetPathNotify(func(k ed25519.PublicKey) {
+		notified.Add(1)
+		mu.Lock()
+		notifiedKeys[hex.EncodeToString(k)] = true
+		mu.Unlock()
+	})
 
 	keys := make([]string, 0, len(byKey))
 	for k := range byKey {
@@ -118,18 +129,20 @@ func main() {
 	}
 
 	// Collect results.
-	paths := node.Paths()
-	pathCoords := map[string]string{}
-	for _, p := range paths {
-		pathCoords[hex.EncodeToString(p.Key)] = collector.PathString(p.Path)
+	mu.Lock()
+	answeredSet := make(map[string]bool, len(notifiedKeys))
+	for k := range notifiedKeys {
+		answeredSet[k] = true
 	}
+	mu.Unlock()
 	tree := node.Tree()
 	fmt.Println("\n=== results ===")
-	fmt.Printf("tree entries: %d, path entries: %d\n", len(tree), len(paths))
+	fmt.Printf("tree entries: %d, path cache now: %d (кэш путей живёт ~1 мин, мерой служат ответы)\n",
+		len(tree), len(node.Paths()))
 
 	var upHas, upMiss, downHas, downMiss int
 	for k, p := range byKey {
-		_, ok := pathCoords[k]
+		_, ok := answeredSet[k]
 		switch {
 		case p.Up && ok:
 			upHas++
@@ -144,17 +157,15 @@ func main() {
 	fmt.Printf("UP peers   (per crawler): answered %d, silent %d\n", upHas, upMiss)
 	fmt.Printf("DOWN peers (per crawler): answered %d, silent %d\n", downHas, downMiss)
 
-	fmt.Println("\nsample coords (up peers):")
+	fmt.Println("\nsample answered (up peers):")
 	n := 0
 	for _, k := range keys {
-		if !byKey[k].Up {
+		if !byKey[k].Up || !answeredSet[k] {
 			continue
 		}
-		if c, ok := pathCoords[k]; ok {
-			fmt.Printf("  %s… -> %-16s %s\n", k[:12], c, byKey[k].IPv6)
-			if n++; n >= 8 {
-				break
-			}
+		fmt.Printf("  %s… %-16s %s\n", k[:12], byKey[k].Country, byKey[k].IPv6)
+		if n++; n >= 5 {
+			break
 		}
 	}
 

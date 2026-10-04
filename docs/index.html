@@ -45,6 +45,8 @@
   circle.peer   { fill: #38bdf8; }
   circle.peerc  { fill: #fb923c; }  /* координаты изменились с прошлого ts */
   circle.rootn  { fill: #fbbf24; }
+  text.flagnode { font-size: 15px; text-anchor: middle; cursor: pointer; }
+  circle.chgring { fill: none; stroke: #fb923c; stroke-width: 2; pointer-events: none; }
   text.lbl       { fill: #94a3b8; font-size: 11px; font-family: ui-monospace, monospace; }
   text.lbl.peer  { fill: #7dd3fc; cursor: pointer; }
   text.lbl.peerc { fill: #fdba74; cursor: pointer; }
@@ -94,11 +96,11 @@
   <label class="opt" title="Подсветить пиры, сменившие координаты с предыдущего состояния">
     <input type="checkbox" id="opt-diff"> изменения
   </label>
-  <label class="opt" title="Показывать флаг страны рядом с подписью">
-    <input type="checkbox" id="opt-flags"> флаги
+  <label class="opt" title="Показывать флаг страны вместо точки пира">
+    <input type="checkbox" id="opt-flags" checked> флаги
   </label>
   <div id="search">
-    <input id="q" type="search" placeholder="поиск: coords · ipv6 · key · endpoint · страна"
+    <input id="q" type="search" placeholder="поиск"
            autocomplete="off" spellcheck="false">
     <div id="results"></div>
   </div>
@@ -217,8 +219,10 @@ function selectIndex(i) {
 }
 
 function prevDiff() { // состояние предыдущей точки для подсветки изменений
-  const i = selIndex();
-  if (i === 0 || points.length === 0) return null;
+  if (points.length === 0) return null;
+  let i = selIndex();
+  if (sel === null) i = points.length - 1; // «сейчас» = последний ts
+  if (i <= 0) return null;
   return stateAtPoint(i - 1);
 }
 
@@ -287,23 +291,32 @@ function renderMap() {
   const nodes = buildNodes(state);
   layout(nodes);
 
-  let edges = "", circles = "", labels = "";
+  // глиф узла: флаг страны вместо точки у пиров (если включено и страна известна)
+  const flagOfNode = n => (flagsOn && n.key !== null) ? flagOf(registry.get(n.key)?.country || "") : "";
+  const glyphR = n => n.id === "" ? 6 : (n.key === null ? 3.5 : (flagOfNode(n) ? 9 : 5));
+
+  let edges = "", glyphs = "", labels = "";
   for (const n of nodes.values()) {
     const isPeer = n.key !== null;
     const changed = diffOn && isPeer && prev.get(n.key) !== state.get(n.key);
     const k = n.id === "" ? "rootn" : changed ? "peerc" : (isPeer ? "peer" : "dot");
-    const r = n.id === "" ? 6 : (isPeer ? 5 : 3.5);
+    const flag = flagOfNode(n);
+    const r = glyphR(n);
     for (const c of n.children) {
-      const cr = c.id === "" ? 6 : (c.key !== null ? 5 : 3.5);
+      const cr = glyphR(c);
       const midX = (n.x + c.x) / 2;
       edges += `<path class="edge" d="M ${n.x + r} ${n.y} H ${midX} V ${c.y} H ${c.x - cr}"/>`;
     }
-    circles += `<circle class="node ${k}" data-id="${n.id}" data-key="${n.key || ""}" cx="${n.x}" cy="${n.y}" r="${r}"/>`;
-    const flag = flagsOn && isPeer ? flagOf(registry.get(n.key)?.country || "") : "";
+    if (flag) {
+      if (changed) glyphs += `<circle class="chgring" cx="${n.x}" cy="${n.y}" r="10"/>`;
+      glyphs += `<text class="flagnode" data-id="${n.id}" data-key="${n.key}" x="${n.x}" y="${n.y + 5}">${flag}</text>`;
+    } else {
+      glyphs += `<circle class="node ${k}" data-id="${n.id}" data-key="${n.key || ""}" cx="${n.x}" cy="${n.y}" r="${r}"/>`;
+    }
     const text = n.id === "" ? '""' : n.id;
-    labels += `<text class="lbl ${k}" data-id="${n.id}" data-key="${n.key || ""}" x="${n.x + r + 6}" y="${n.y + 3.5}">${flag ? flag + " " : ""}${text}</text>`;
+    labels += `<text class="lbl ${k}" data-id="${n.id}" data-key="${n.key || ""}" x="${n.x + r + 6}" y="${n.y + 3.5}">${text}</text>`;
   }
-  svg.innerHTML = edges + circles + labels;
+  svg.innerHTML = edges + glyphs + labels;
 
   // мета-строка
   const peers = [...state.entries()];
@@ -395,6 +408,14 @@ tlsvg.addEventListener("click", e => {
 
 // ---------- зум/пан (мышь + тач) ----------
 
+// перерисовку вида сводим к одному разу на кадр — пан не отстаёт от мыши
+let rafPending = false;
+function scheduleApply() {
+  if (rafPending) return;
+  rafPending = true;
+  requestAnimationFrame(() => { rafPending = false; apply(); });
+}
+
 function svgPoint(x, y) {
   const pt = svg.createSVGPoint();
   pt.x = x; pt.y = y;
@@ -405,15 +426,17 @@ function zoomAt(cx, cy, k) {
   vb = { x: p.x - (p.x - vb.x) * k, y: p.y - (p.y - vb.y) * k, w: vb.w * k, h: vb.h * k };
   apply();
 }
+
+let svgRect = null; // кэш размеров на время жеста
 function panBy(dx, dy) {
-  const rect = svg.getBoundingClientRect();
-  vb = { ...vb, x: vb.x - dx * (vb.w / rect.width), y: vb.y - dy * (vb.h / rect.height) };
-  apply();
+  const r = svgRect || svg.getBoundingClientRect();
+  vb = { ...vb, x: vb.x - dx * (vb.w / r.width), y: vb.y - dy * (vb.h / r.height) };
+  scheduleApply();
 }
 
 svg.addEventListener("wheel", e => {
   e.preventDefault();
-  zoomAt(e.clientX, e.clientY, e.deltaY < 0 ? 1 / 1.15 : 1.15);
+  zoomAt(e.clientX, e.clientY, e.deltaY < 0 ? 1 / 1.08 : 1.08);
 }, { passive: false });
 
 const pointers = new Map();
@@ -430,8 +453,12 @@ svg.addEventListener("pointerdown", e => {
   pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
   dragged = false;
   svg.classList.add("panning");
-  if (pointers.size === 1) { panStart = { x: e.clientX, y: e.clientY, vb: { ...vb } }; pinchPrev = null; }
-  else if (pointers.size === 2) { panStart = null; pinchPrev = pinchInfo(); }
+  if (!svgRect) svgRect = svg.getBoundingClientRect();
+  if (pointers.size === 1) {
+    panStart = { x: e.clientX, y: e.clientY, vb: { ...vb },
+                 kx: vb.w / svgRect.width, ky: vb.h / svgRect.height };
+    pinchPrev = null;
+  } else if (pointers.size === 2) { panStart = null; pinchPrev = pinchInfo(); }
 });
 window.addEventListener("pointermove", e => {
   if (!pointers.has(e.pointerId)) return;
@@ -439,11 +466,8 @@ window.addEventListener("pointermove", e => {
   if (pointers.size === 1 && panStart) {
     const dx = e.clientX - panStart.x, dy = e.clientY - panStart.y;
     if (Math.abs(dx) + Math.abs(dy) > 4) dragged = true;
-    const rect = svg.getBoundingClientRect();
-    vb = { ...panStart.vb,
-           x: panStart.vb.x - dx * (panStart.vb.w / rect.width),
-           y: panStart.vb.y - dy * (panStart.vb.h / rect.height) };
-    apply();
+    vb = { ...panStart.vb, x: panStart.vb.x - dx * panStart.kx, y: panStart.vb.y - dy * panStart.ky };
+    scheduleApply();
   } else if (pointers.size >= 2 && pinchPrev) {
     const ci = pinchInfo();
     const k = pinchPrev.dist / ci.dist;
@@ -455,15 +479,18 @@ window.addEventListener("pointermove", e => {
 });
 function releasePointer(e) {
   pointers.delete(e.pointerId);
-  if (pointers.size === 0) svg.classList.remove("panning");
+  if (pointers.size === 0) { svg.classList.remove("panning"); svgRect = null; }
   else if (pointers.size === 1) {
     const [p] = [...pointers.values()];
     panStart = { x: p.x, y: p.y, vb: { ...vb } };
+    panStart.kx = vb.w / (svgRect?.width || svg.getBoundingClientRect().width);
+    panStart.ky = vb.h / (svgRect?.height || svg.getBoundingClientRect().height);
     pinchPrev = null;
   }
 }
 window.addEventListener("pointerup", releasePointer);
 window.addEventListener("pointercancel", releasePointer);
+window.addEventListener("resize", () => { svgRect = null; });
 
 svg.addEventListener("dblclick", () => { if (lastNodes) fit(lastNodes); });
 document.getElementById("zin").addEventListener("click", () =>
@@ -475,10 +502,10 @@ document.getElementById("zfit").addEventListener("click", () => { if (lastNodes)
 // ---------- тултип ----------
 
 svg.addEventListener("pointermove", e => {
-  const t = e.target.closest("circle.node");
+  const t = e.target.closest("circle.node, text.flagnode");
   if (!t || pointers.size > 0) { tipEl.style.display = "none"; return; }
   tipEl.textContent = `${t.dataset.id === "" ? '""' : t.dataset.id} — ` +
-    (t.classList.contains("rootn") ? "корень" : t.classList.contains("dot") ? "точка" : "публичный пир");
+    (t.dataset.id === "" ? "корень" : t.classList.contains("dot") ? "точка" : "публичный пир");
   tipEl.style.display = "block";
   tipEl.style.left = e.clientX + 14 + "px";
   tipEl.style.top = e.clientY + 14 + "px";
@@ -512,7 +539,7 @@ function showCard(key, coords, x, y) {
 }
 
 svg.addEventListener("click", e => {
-  const t = e.target.closest("circle.node, text.lbl");
+  const t = e.target.closest("circle.node, text.lbl, text.flagnode");
   if (!t || dragged) return;
   if (!t.dataset.key) { hideCard(); return; }
   showCard(t.dataset.key, t.dataset.id, e.clientX, e.clientY);
@@ -598,9 +625,10 @@ function jumpTo(key, coords) {
 
 let hlTimer = null;
 function highlight(coords) {
-  const el = svg.querySelector(`circle.node[data-id="${CSS.escape(coords)}"]`);
+  const el = svg.querySelector(`circle.node[data-id="${CSS.escape(coords)}"], text.flagnode[data-id="${CSS.escape(coords)}"]`);
   if (!el) return;
-  const cx = +el.getAttribute("cx"), cy = +el.getAttribute("cy");
+  const cx = +(el.getAttribute("cx") ?? el.getAttribute("x"));
+  const cy = +(el.getAttribute("cy") ?? el.getAttribute("y"));
   // центрируем окно на ноде
   const rect = svg.getBoundingClientRect();
   const w = Math.max(500, vb.w / 2.5), h = w * (rect.height / rect.width);
@@ -618,8 +646,19 @@ function highlight(coords) {
 
 // ---------- переключатели, клавиатура, жизненный цикл ----------
 
-document.getElementById("opt-diff").addEventListener("change", renderMap);
-document.getElementById("opt-flags").addEventListener("change", renderMap);
+// опции карты: состояние переживает перезагрузку (localStorage)
+const optDiffEl = document.getElementById("opt-diff");
+const optFlagsEl = document.getElementById("opt-flags");
+try {
+  const saved = JSON.parse(localStorage.getItem("ymonitor-opts") || "{}");
+  if (typeof saved.diff === "boolean") optDiffEl.checked = saved.diff;
+  if (typeof saved.flags === "boolean") optFlagsEl.checked = saved.flags;
+} catch { /* приватный режим — живём с дефолтами */ }
+const saveOpts = () => {
+  try { localStorage.setItem("ymonitor-opts", JSON.stringify({ diff: optDiffEl.checked, flags: optFlagsEl.checked })); } catch {}
+};
+optDiffEl.addEventListener("change", () => { saveOpts(); renderMap(); });
+optFlagsEl.addEventListener("change", () => { saveOpts(); renderMap(); });
 document.getElementById("prev").addEventListener("click", () => selectIndex(selIndex() - 1));
 document.getElementById("next").addEventListener("click", () => selectIndex(selIndex() + 1));
 document.getElementById("golive").addEventListener("click", () => { sel = null; renderAll(); });
@@ -633,7 +672,7 @@ document.addEventListener("keydown", e => {
 document.addEventListener("click", e => {
   if (!e.target.closest("#card") && !e.target.closest("#controls") &&
       !e.target.closest("circle.node") && !e.target.closest("text.lbl") &&
-      !e.target.closest("#search")) hideCard();
+      !e.target.closest("text.flagnode") && !e.target.closest("#search")) hideCard();
 });
 
 let needFit = true;
