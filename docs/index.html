@@ -167,7 +167,7 @@ const I18N = {
     root: "корень", changed: "изменилось", peer: "пир", dot: "точка",
     publicPeer: "публичный пир", noHistory: "истории пока нет",
     tPrev: "Предыдущее состояние (←)", tNext: "Следующее состояние (→)",
-    tLive: "К текущему состоянию", tIn: "Приблизить", tOut: "Отдалить",
+    tLive: "К последнему состоянию на таймлайне", tIn: "Приблизить", tOut: "Отдалить",
     tFit: "Вписать в экран", loading: "загрузка…", error: "ошибка загрузки",
   },
   en: {
@@ -180,7 +180,7 @@ const I18N = {
     root: "root", changed: "changed", peer: "peer", dot: "dot",
     publicPeer: "public peer", noHistory: "no history yet",
     tPrev: "Previous state (←)", tNext: "Next state (→)",
-    tLive: "Back to the live state", tIn: "Zoom in", tOut: "Zoom out",
+    tLive: "Jump to the latest timeline state", tIn: "Zoom in", tOut: "Zoom out",
     tFit: "Fit to screen", loading: "loading…", error: "failed to load",
   },
 };
@@ -414,7 +414,7 @@ function renderTimeline() {
 
   document.getElementById("prev").disabled = selIndex() === 0;
   document.getElementById("next").disabled = selIndex() >= points.length;
-  document.getElementById("golive").disabled = sel === null;
+  document.getElementById("golive").disabled = points.length > 0 && sel === points.length - 1;
 }
 
 function fmtDate(ts) {
@@ -487,6 +487,8 @@ svg.addEventListener("wheel", e => {
 
 const pointers = new Map();
 let panStart = null, pinchPrev = null, dragged = false;
+let lastTap = null;  // {x, y, t} последнего короткого тапа — для жеста зума
+let zoomDrag = null; // активный жест «тап — тап+удержание — вверх/вниз»
 
 function pinchInfo() {
   const [a, b] = [...pointers.values()];
@@ -501,6 +503,20 @@ svg.addEventListener("pointerdown", e => {
   svg.classList.add("panning");
   if (!svgRect) svgRect = svg.getBoundingClientRect();
   if (pointers.size === 1) {
+    // жест как на Яндекс/Google картах: тап, затем быстрое нажатие рядом
+    // без отпускания — и движение вверх/вниз зумит карту
+    if (lastTap && performance.now() - lastTap.t < 350 &&
+        Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 45) {
+      const pt = svg.createSVGPoint();
+      pt.x = e.clientX; pt.y = e.clientY;
+      const p = pt.matrixTransform(svg.getScreenCTM().inverse());
+      zoomDrag = { y0: e.clientY, ax: p.x, ay: p.y, vb: { ...vb } };
+      dragged = true; // жест не должен открывать карточку
+      hideCard();
+      lastTap = null;
+      panStart = null;
+      return;
+    }
     const s = vbScale();
     panStart = { x: e.clientX, y: e.clientY, vb: { ...vb }, kx: s.kx, ky: s.ky };
     pinchPrev = null;
@@ -509,7 +525,15 @@ svg.addEventListener("pointerdown", e => {
 window.addEventListener("pointermove", e => {
   if (!pointers.has(e.pointerId)) return;
   pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-  if (pointers.size === 1 && panStart) {
+  if (zoomDrag && pointers.size === 1) {
+    // вверх = приблизить (как на Яндекс/Google картах); коэффициент
+    // считается от начального вида жеста, без накопления ошибки
+    const k = Math.exp((e.clientY - zoomDrag.y0) / 250);
+    vb = { x: zoomDrag.ax - (zoomDrag.ax - zoomDrag.vb.x) * k,
+           y: zoomDrag.ay - (zoomDrag.ay - zoomDrag.vb.y) * k,
+           w: zoomDrag.vb.w * k, h: zoomDrag.vb.h * k };
+    scheduleApply();
+  } else if (pointers.size === 1 && panStart) {
     const dx = e.clientX - panStart.x, dy = e.clientY - panStart.y;
     if (Math.abs(dx) + Math.abs(dy) > 4) dragged = true;
     vb = { ...panStart.vb, x: panStart.vb.x - dx * panStart.kx, y: panStart.vb.y - dy * panStart.ky };
@@ -525,19 +549,28 @@ window.addEventListener("pointermove", e => {
 });
 function releasePointer(e) {
   pointers.delete(e.pointerId);
-  if (pointers.size === 0) { svg.classList.remove("panning"); svgRect = null; }
-  else if (pointers.size === 1) {
+  if (pointers.size === 0) {
+    svg.classList.remove("panning");
+    svgRect = null;
+    zoomDrag = null;
+    if (!dragged) lastTap = { x: e.clientX, y: e.clientY, t: performance.now() };
+  } else if (pointers.size === 1) {
     const [p] = [...pointers.values()];
     const s = vbScale();
     panStart = { x: p.x, y: p.y, vb: { ...vb }, kx: s.kx, ky: s.ky };
     pinchPrev = null;
+    zoomDrag = null;
   }
 }
 window.addEventListener("pointerup", releasePointer);
 window.addEventListener("pointercancel", releasePointer);
 window.addEventListener("resize", () => { svgRect = null; });
 
-svg.addEventListener("dblclick", () => { if (lastNodes) fit(lastNodes); });
+// двойной тап/клик — приблизить в месте нажатия (вписать в экран — кнопка ⤢)
+svg.addEventListener("dblclick", e => {
+  hideCard();
+  zoomAt(e.clientX, e.clientY, 1 / 1.7);
+});
 document.getElementById("zin").addEventListener("click", () =>
   zoomAt(window.innerWidth / 2, window.innerHeight / 2, 1 / 1.3));
 document.getElementById("zout").addEventListener("click", () =>
@@ -707,7 +740,8 @@ optDiffEl.addEventListener("change", () => { saveOpts(); renderMap(); });
 optFlagsEl.addEventListener("change", () => { saveOpts(); renderMap(); });
 document.getElementById("prev").addEventListener("click", () => selectIndex(selIndex() - 1));
 document.getElementById("next").addEventListener("click", () => selectIndex(selIndex() + 1));
-document.getElementById("golive").addEventListener("click", () => { sel = null; renderAll(); });
+// «сейчас» = последний столбик таймлайна (если истории ещё нет — живое состояние)
+document.getElementById("golive").addEventListener("click", () => selectIndex(points.length - 1));
 
 document.addEventListener("keydown", e => {
   if (e.target === qEl) return;
