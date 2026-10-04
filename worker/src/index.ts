@@ -21,6 +21,7 @@ interface PeerRow {
   endpoints: string[];
   coords: string | null;
   last_answer_ts: number | null;
+  country?: string | null;
 }
 interface EventRow {
   ts: number;
@@ -44,6 +45,7 @@ export default {
       if (request.method === "GET" || request.method === "HEAD") {
         if (path === "/v1/peers") return cors(await getPeers(env));
         if (path === "/v1/tree") return cors(await getTree(env));
+        if (path === "/v1/events") return cors(await getEvents(env, url));
         if (path === "/v1/stats") return cors(await getStats(env));
         if (path === "/healthz") return cors(json({ ok: true }));
         const m = path.match(/^\/v1\/peers\/([0-9a-fA-F]{64})$/);
@@ -63,7 +65,7 @@ export default {
 
 async function getPeers(env: Env): Promise<Response> {
   const { results } = await env.DB.prepare(
-    "SELECT key, ipv6, endpoints, coords, updated_at, last_answer_ts FROM peers ORDER BY key"
+    "SELECT key, ipv6, endpoints, coords, updated_at, last_answer_ts, country FROM peers ORDER BY key"
   ).all<DbPeer>();
   const peers = (results ?? []).map((r) => ({
     key: r.key,
@@ -72,6 +74,7 @@ async function getPeers(env: Env): Promise<Response> {
     coords: r.coords,
     updated_at: r.updated_at,
     last_answer_ts: r.last_answer_ts,
+    country: r.country,
   }));
   const present = peers.filter((p) => p.coords !== null).length;
   return json({ as_of: await pollTs(env), count: peers.length, present, peers });
@@ -79,7 +82,7 @@ async function getPeers(env: Env): Promise<Response> {
 
 async function getPeer(env: Env, key: string): Promise<Response> {
   const r = await env.DB.prepare(
-    "SELECT key, ipv6, endpoints, coords, updated_at, last_answer_ts FROM peers WHERE key = ?"
+    "SELECT key, ipv6, endpoints, coords, updated_at, last_answer_ts, country FROM peers WHERE key = ?"
   )
     .bind(key)
     .first<DbPeer>();
@@ -91,6 +94,7 @@ async function getPeer(env: Env, key: string): Promise<Response> {
     coords: r.coords,
     updated_at: r.updated_at,
     last_answer_ts: r.last_answer_ts,
+    country: r.country,
   });
 }
 
@@ -108,23 +112,47 @@ async function getHistory(env: Env, key: string, url: URL): Promise<Response> {
   return json({ key, events: results ?? [] });
 }
 
-// getTree returns the minimal snapshot an interactive tree UI needs: the
-// peers that are currently in the tree with their coordinates. Dots (non-
-// public ancestor nodes) and edges are NOT included — both are derived on
-// the client from coords alone:
+// getTree returns everything the map UI needs in one shot: the peers that
+// are currently in the tree with coordinates AND identity (ipv6, endpoints,
+// country), so the page renders details without further requests. Dots and
+// edges are still derived client-side from coords prefixes:
 //   * parent of "1.2.3" is "1.2"; the implicit root is "" (a peer with
 //     coords "" IS the root);
-//   * every strict prefix of any coords is a "dot" node; chains of degree-1
-//     dots may be freely path-compressed for readability.
+//   * every strict prefix of any coords is a "dot" node.
 async function getTree(env: Env): Promise<Response> {
   const { results } = await env.DB.prepare(
-    "SELECT coords, key, ipv6 FROM peers WHERE coords IS NOT NULL ORDER BY key"
-  ).all<{ coords: string; key: string; ipv6: string }>();
+    "SELECT coords, key, ipv6, endpoints, country FROM peers WHERE coords IS NOT NULL ORDER BY key"
+  ).all<{ coords: string; key: string; ipv6: string; endpoints: string; country: string | null }>();
   return json({
     as_of: await pollTs(env),
-    // field order matters for readability: structure first, then identity
-    peers: (results ?? []).map((r) => ({ coords: r.coords, key: r.key, ipv6: r.ipv6 })),
+    // field order: structure first, then identity
+    peers: (results ?? []).map((r) => ({
+      coords: r.coords,
+      key: r.key,
+      ipv6: r.ipv6,
+      endpoints: JSON.parse(r.endpoints) as string[],
+      country: r.country,
+    })),
   });
+}
+
+// getEvents returns the full change log (ascending), which the UI replays
+// to reconstruct the tree at any historical timestamp without storing
+// snapshots.
+async function getEvents(env: Env, url: URL): Promise<Response> {
+  const from = intParam(url.searchParams.get("from"));
+  const to = intParam(url.searchParams.get("to"));
+  const limit = Math.min(intParam(url.searchParams.get("limit")) ?? 100000, 200000);
+  let sql = "SELECT ts, peer_key, old_coords, new_coords FROM events";
+  const where: string[] = [];
+  const args: unknown[] = [];
+  if (from !== null) where.push("ts >= ?"), args.push(from);
+  if (to !== null) where.push("ts <= ?"), args.push(to);
+  if (where.length) sql += " WHERE " + where.join(" AND ");
+  sql += " ORDER BY ts ASC LIMIT ?";
+  args.push(limit);
+  const { results } = await env.DB.prepare(sql).bind(...args).all<EventRow>();
+  return json({ events: results ?? [] });
 }
 
 async function getStats(env: Env): Promise<Response> {
@@ -172,7 +200,9 @@ async function ingest(request: Request, env: Env): Promise<Response> {
       !KEY_RE.test(p.key) ||
       typeof p.ipv6 !== "string" ||
       !Array.isArray(p.endpoints) ||
-      (p.last_answer_ts !== null && p.last_answer_ts !== undefined && !Number.isInteger(p.last_answer_ts))
+      (p.last_answer_ts !== null && p.last_answer_ts !== undefined && !Number.isInteger(p.last_answer_ts)) ||
+      (p.country !== null && p.country !== undefined && typeof p.country !== "string") ||
+      (typeof p.country === "string" && p.country.length > 64)
     ) {
       return json({ error: "bad peer row" }, 400);
     }
@@ -187,13 +217,13 @@ async function ingest(request: Request, env: Env): Promise<Response> {
   for (const p of peers) {
     stmts.push(
       env.DB.prepare(
-        `INSERT INTO peers (key, ipv6, endpoints, coords, updated_at, last_answer_ts)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+        `INSERT INTO peers (key, ipv6, endpoints, coords, updated_at, last_answer_ts, country)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
          ON CONFLICT(key) DO UPDATE SET
            ipv6 = excluded.ipv6, endpoints = excluded.endpoints,
            coords = excluded.coords, updated_at = excluded.updated_at,
-           last_answer_ts = excluded.last_answer_ts`
-      ).bind(p.key, p.ipv6, JSON.stringify(p.endpoints), p.coords, body.poll_ts, p.last_answer_ts ?? null)
+           last_answer_ts = excluded.last_answer_ts, country = excluded.country`
+      ).bind(p.key, p.ipv6, JSON.stringify(p.endpoints), p.coords, body.poll_ts, p.last_answer_ts ?? null, p.country ?? null)
     );
   }
   for (const e of events) {
@@ -231,6 +261,7 @@ interface DbPeer {
   coords: string | null;
   updated_at: number;
   last_answer_ts: number | null;
+  country: string | null;
 }
 
 function json(data: unknown, status = 200): Response {

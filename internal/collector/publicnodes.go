@@ -39,6 +39,7 @@ type ListPeer struct {
 	IPv6      string   // 200::/7 address derived from the key
 	Endpoints []string // peer URIs, e.g. tcp://1.2.3.4:1337
 	Up        bool     // at least one endpoint was up at last crawler check
+	Country   string   // from the public-peers file the peer is listed in, e.g. "Hong Kong"
 }
 
 func FetchPublicNodes(ctx context.Context, url string) (PublicNodes, error) {
@@ -71,18 +72,24 @@ func FetchPublicNodes(ctx context.Context, url string) (PublicNodes, error) {
 }
 
 // PeersByKey collapses all URIs that share a node key into one ListPeer.
-// Peers without a known key (never seen up) are skipped.
+// Peers without a known key (never seen up) are skipped. Country comes from
+// the public-peers markdown file name; the rare peer listed in several
+// countries gets the alphabetically first one (deterministic).
 func (pn PublicNodes) PeersByKey() map[string]*ListPeer {
 	byKey := map[string]*ListPeer{}
-	for _, entries := range pn {
+	for file, entries := range pn {
+		country := CountryFromFile(file)
 		for uri, e := range entries {
 			if e.Key == "" {
 				continue
 			}
 			p, ok := byKey[e.Key]
 			if !ok {
-				p = &ListPeer{Key: e.Key}
+				p = &ListPeer{Key: e.Key, Country: country}
 				byKey[e.Key] = p
+			}
+			if country != "" && (p.Country == "" || country < p.Country) {
+				p.Country = country
 			}
 			p.Endpoints = append(p.Endpoints, uri)
 			if e.Up {
@@ -97,6 +104,18 @@ func (pn PublicNodes) PeersByKey() map[string]*ListPeer {
 		}
 	}
 	return byKey
+}
+
+// CountryFromFile turns a public-peers file name into a display country:
+// "hong-kong.md" -> "Hong Kong".
+func CountryFromFile(file string) string {
+	name := strings.TrimSuffix(file, ".md")
+	name = strings.NewReplacer("-", " ", "_", " ").Replace(name)
+	words := strings.Fields(name)
+	for i, w := range words {
+		words[i] = strings.ToUpper(w[:1]) + strings.ToLower(w[1:])
+	}
+	return strings.Join(words, " ")
 }
 
 // SelectPeers returns up to n URIs of distinct, currently-up 0.5.x peers,

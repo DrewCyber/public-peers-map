@@ -15,6 +15,7 @@ type PeerRow struct {
 	Endpoints    []string `json:"endpoints"`      // peer URIs
 	Coords       *string  `json:"coords"`         // "1.2.3", "" = root node, null = not in tree
 	LastAnswerTS *int64   `json:"last_answer_ts"` // last poll where the peer answered, null = never
+	Country      string   `json:"country,omitempty"`
 	UpdatedAt    int64    `json:"updated_at,omitempty"`
 }
 
@@ -56,6 +57,7 @@ type trackState struct {
 	Present   bool   // currently considered present in the tree
 	Endpoints string // joined endpoints, for change detection
 	IPv6      string
+	Country   string
 	Known     bool  // a row for this peer was already emitted
 	LastAnswerDB int64 // last_answer_ts value as last written to the DB row
 	LastAnswer   int64 // ts of the most recent cycle where the peer answered
@@ -77,6 +79,7 @@ func (t *Tracker) Bootstrap(rows []PeerRow) {
 		st := &trackState{
 			Endpoints: strings.Join(r.Endpoints, "\x00"),
 			IPv6:      r.IPv6,
+			Country:   r.Country,
 			Known:     true,
 		}
 		if r.Coords != nil {
@@ -158,7 +161,7 @@ func Diff(list map[string]*ListPeer, sample map[string]string, tr *Tracker, opts
 		}
 
 		ep := strings.Join(lp.Endpoints, "\x00")
-		if ep != st.Endpoints || lp.IPv6 != st.IPv6 {
+		if ep != st.Endpoints || lp.IPv6 != st.IPv6 || lp.Country != st.Country {
 			rowChanged = true
 		}
 		// Heartbeat: periodically rewrite rows of stable, answering peers so
@@ -167,7 +170,7 @@ func Diff(list map[string]*ListPeer, sample map[string]string, tr *Tracker, opts
 			rowChanged = true
 		}
 
-		st.Endpoints, st.IPv6, st.Known = ep, lp.IPv6, true
+		st.Endpoints, st.IPv6, st.Country, st.Known = ep, lp.IPv6, lp.Country, true
 
 		if rowChanged {
 			st.LastAnswerDB = st.LastAnswer
@@ -175,6 +178,7 @@ func Diff(list map[string]*ListPeer, sample map[string]string, tr *Tracker, opts
 				Key:       key,
 				IPv6:      lp.IPv6,
 				Endpoints: append([]string(nil), lp.Endpoints...),
+				Country:   lp.Country,
 			}
 			if st.Present {
 				row.Coords = strPtr(st.Coords)
