@@ -215,20 +215,22 @@ let sel = null;           // выбранная точка таймлайна; n
 let asOf = 0;
 
 async function load() {
-  const [treeRes, evRes] = await Promise.all([
-    fetch(API_URL + "/v1/tree", { cache: "no-store" }),
+  // берём /v1/peers, а не /v1/tree: там ВСЕ зарегистрированные пиры,
+  // включая отсутствующих в дереве — они должны находиться поиском
+  const [peersRes, evRes] = await Promise.all([
+    fetch(API_URL + "/v1/peers", { cache: "no-store" }),
     fetch(API_URL + "/v1/events?limit=200000", { cache: "no-store" }),
   ]);
-  if (!treeRes.ok) throw new Error("tree: HTTP " + treeRes.status);
+  if (!peersRes.ok) throw new Error("peers: HTTP " + peersRes.status);
   if (!evRes.ok) throw new Error("events: HTTP " + evRes.status);
-  const tree = await treeRes.json();
+  const pl = await peersRes.json();
   const ev = await evRes.json();
 
-  asOf = tree.as_of;
+  asOf = pl.as_of;
   registry = new Map(); cur = new Map();
-  for (const p of tree.peers) {
+  for (const p of pl.peers) {
     registry.set(p.key, { ipv6: p.ipv6, endpoints: p.endpoints || [], country: p.country || "" });
-    cur.set(p.key, p.coords);
+    if (p.coords !== null) cur.set(p.key, p.coords); // присутствующие — для карты
   }
   events = ev.events || [];
   points = []; counts = [];
@@ -678,7 +680,7 @@ function showCard(key, coords, x, y) {
   pinned = key;
   const flag = flagOf(r.country);
   cardEl.innerHTML =
-    `<h3>${dispC(coords)}</h3>` +
+    `<h3>${coords == null ? "—" : dispC(coords)}</h3>` +
     (r.country ? `<div class="cty">${flag ? flag + " " : ""}${r.country}</div>` : "") +
     `<div class="v6">${r.ipv6}</div>` +
     `<div class="pk">${key}</div>` +
@@ -753,8 +755,9 @@ resEl.addEventListener("click", e => {
   const h = resEl._hits[+d.dataset.i];
   resEl.style.display = "none";
   const st = currentState();
-  if (h.coords !== undefined) jumpTo(h.key, h.coords);
-  else jumpTo(h.key, st.get(h.key));
+  const c = h.coords !== undefined ? h.coords : st.get(h.key);
+  if (c === undefined) showCard(h.key, null, e.clientX, e.clientY); // пира нет в этом состоянии — хотя бы карточка
+  else jumpTo(h.key, c);
 });
 
 qEl.addEventListener("input", () => runSearch(qEl.value));
