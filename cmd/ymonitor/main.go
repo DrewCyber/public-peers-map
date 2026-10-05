@@ -170,6 +170,11 @@ func parseConfig() config {
 	fs.StringVar(&c.healthAddr, "health", envString("HEALTH_ADDR", "127.0.0.1:8080"), "local health endpoint, empty disables (env HEALTH_ADDR)")
 	fs.StringVar(&c.logLevel, "log-level", envString("LOG_LEVEL", "info"), "debug|info|warn (env LOG_LEVEL)")
 	_ = fs.Parse(os.Args[1:])
+
+	// csv flags can't carry an env default through fs.Var — seed them here;
+	// an explicit flag replaces the env value (csvFlag.Set overwrites).
+	c.peers = envCSV("PEERS", c.peers)
+	c.customPeers = envCSV("CUSTOM_PEERS", c.customPeers)
 	return c
 }
 
@@ -194,6 +199,25 @@ func envDuration(key string, def time.Duration) time.Duration {
 		}
 	}
 	return def
+}
+
+// envCSV returns the flag value when one was given, else the env variable
+// split on commas.
+func envCSV(key string, flagVal []string) []string {
+	if len(flagVal) > 0 {
+		return flagVal
+	}
+	v := os.Getenv(key)
+	if v == "" {
+		return nil
+	}
+	var out []string
+	for _, p := range strings.Split(v, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 type csvFlag struct{ dst *[]string }
