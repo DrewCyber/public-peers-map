@@ -46,4 +46,5 @@ jobs:
             -e ONCE=1 \
             -e POLL_INTERVAL=30m \
             -e VANISH_AFTER=90m \
+            -e CUSTOM_PEERS="ws://opns.nixm.ru:9002" \
             ghcr.io/drewcyber/public-peers-map:latest

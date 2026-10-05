@@ -13,6 +13,7 @@ services:
       WORKER_URL: ${WORKER_URL:?set WORKER_URL in .env}
       INGEST_TOKEN: ${INGEST_TOKEN:?set INGEST_TOKEN in .env}
       # PEERS: "tcp://host:port,tls://host:port"   # default: auto-selected from the list
+      # CUSTOM_PEERS: "tcp://host:port"            # monitor peers absent from publicnodes.json
       # POLL_INTERVAL: 5m        # also defines the default vanish window (3x)
       # VANISH_AFTER: 15m
       # HEARTBEAT_EVERY: 15m

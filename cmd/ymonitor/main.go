@@ -87,6 +87,7 @@ func main() {
 		VanishAfter:    cfg.vanishAfter,
 		HeartbeatEvery: cfg.heartbeatEvery,
 		PublicNodesURL: cfg.publicNodesURL,
+		CustomPeers:    cfg.customPeers,
 	}, log)
 
 	// Flush anything left from a previous run before collecting new data.
@@ -145,6 +146,7 @@ type config struct {
 	probeTimeout   time.Duration
 	healthAddr     string
 	logLevel       string
+	customPeers    []string
 }
 
 func parseConfig() config {
@@ -155,6 +157,7 @@ func parseConfig() config {
 	fs.StringVar(&c.workerURL, "worker-url", envString("WORKER_URL", ""), "ymonitor-api worker URL (env WORKER_URL)")
 	fs.StringVar(&c.ingestToken, "ingest-token", envString("INGEST_TOKEN", ""), "ingest bearer token (env INGEST_TOKEN)")
 	fs.Var(&csvFlag{&c.peers}, "peers", "comma-separated own peer URIs (env PEERS; default: auto-select)")
+	fs.Var(&csvFlag{&c.customPeers}, "custom-peers", "comma-separated peer URIs to monitor even if absent from publicnodes.json (env CUSTOM_PEERS)")
 	fs.DurationVar(&c.pollEvery, "interval", envDuration("POLL_INTERVAL", 5*time.Minute), "poll cycle interval; also sets the vanish window default (env POLL_INTERVAL)")
 	fs.DurationVar(&c.listTTL, "list-ttl", envDuration("LIST_TTL", 24*time.Hour), "publicnodes.json refresh interval (env LIST_TTL)")
 	fs.StringVar(&c.dataDir, "data-dir", envString("DATA_DIR", "./data"), "dir for node key and WAL (env DATA_DIR)")

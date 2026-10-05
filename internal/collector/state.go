@@ -72,6 +72,23 @@ func NewTracker() *Tracker {
 	return &Tracker{m: map[string]*trackState{}}
 }
 
+// KeyForEndpoint returns the key of the tracked peer that advertises uri as
+// one of its endpoints, or "". Custom peers use this to recover their key
+// from stored rows when the peer itself is currently down.
+func (t *Tracker) KeyForEndpoint(uri string) string {
+	if t == nil {
+		return ""
+	}
+	for key, st := range t.m {
+		for _, ep := range strings.Split(st.Endpoints, "\x00") {
+			if ep == uri {
+				return key
+			}
+		}
+	}
+	return ""
+}
+
 // Bootstrap fills the tracker from the worker's current /v1/peers state so
 // that diffs (and the stateless vanish debounce) continue from stored truth.
 func (t *Tracker) Bootstrap(rows []PeerRow) {

@@ -19,6 +19,7 @@ type PollerConfig struct {
 	VanishAfter    time.Duration // present-but-silent longer than this -> vanish; 0 = 3*PollEvery
 	HeartbeatEvery time.Duration // rewrite rows of stable peers at least this often; 0 = 15m
 	PublicNodesURL string        // empty = default
+	CustomPeers    []string      // URIs to monitor even when absent from the public list
 }
 
 // Poller runs collect cycles against one embedded node.
@@ -29,7 +30,9 @@ type Poller struct {
 	cfg   PollerConfig
 	log   *slog.Logger
 
-	list      map[string]*ListPeer // by key
+	pubList   map[string]*ListPeer // publicnodes.json peers, by key
+	pubUp     int
+	list      map[string]*ListPeer // pubList + custom peers, by key
 	listUp    int
 	listAt    time.Time
 	tr        *Tracker
@@ -90,9 +93,23 @@ func (p *Poller) CycleOnce(ctx context.Context) error {
 	if err := p.refreshList(ctx); err != nil {
 		return err
 	}
+	p.ensureCustomPeerings()
 	if err := p.ensurePeerings(ctx); err != nil {
 		return err
 	}
+
+	// The tracker must exist before custom peers are merged: a custom peer
+	// that is currently down recovers its key from the stored rows.
+	if p.tr == nil {
+		rows, err := p.store.FetchPeers()
+		if err != nil {
+			return p.setErr("bootstrap fetch /v1/peers: " + err.Error())
+		}
+		p.tr = NewTracker()
+		p.tr.Bootstrap(rows)
+		p.log.Info("tracker bootstrapped from API", "rows", len(rows))
+	}
+	p.mergeCustomPeers()
 
 	keys := make([]string, 0, len(p.list))
 	for k := range p.list {
@@ -116,16 +133,6 @@ func (p *Poller) CycleOnce(ctx context.Context) error {
 	if len(sample) < minAnswers {
 		p.setErrf("only %d/%d answers (min %d) — cycle skipped, state untouched", len(sample), len(p.list), minAnswers)
 		return nil
-	}
-
-	if p.tr == nil {
-		rows, err := p.store.FetchPeers()
-		if err != nil {
-			return p.setErr("bootstrap fetch /v1/peers: " + err.Error())
-		}
-		p.tr = NewTracker()
-		p.tr.Bootstrap(rows)
-		p.log.Info("tracker bootstrapped from API", "rows", len(rows))
 	}
 
 	ts := time.Now().Unix()
@@ -190,15 +197,16 @@ func (p *Poller) refreshList(ctx context.Context) error {
 		p.log.Warn("publicnodes refresh failed, keeping old list", "err", err)
 		return nil
 	}
-	p.list = pn.PeersByKey()
-	p.listUp = 0
-	for _, lp := range p.list {
+	p.pubList = pn.PeersByKey()
+	p.pubUp = 0
+	for _, lp := range p.pubList {
 		if lp.Up {
-			p.listUp++
+			p.pubUp++
 		}
 	}
+	p.list, p.listUp = p.pubList, p.pubUp
 	p.listAt = time.Now()
-	p.log.Info("publicnodes refreshed", "peers", len(p.list), "up", p.listUp)
+	p.log.Info("publicnodes refreshed", "peers", len(p.pubList), "up", p.pubUp)
 	return nil
 }
 
