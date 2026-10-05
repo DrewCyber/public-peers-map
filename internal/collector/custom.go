@@ -1,10 +1,12 @@
 package collector
 
 import (
+	"context"
 	"crypto/ed25519"
 	"encoding/hex"
 	"net/url"
 	"strings"
+	"time"
 )
 
 // LinkInfo is the subset of the node's link state used to learn custom
@@ -115,7 +117,18 @@ func (p *Poller) linkInfos() []LinkInfo {
 // public key. Configured links redial on their own, so each URI is added
 // once per process; the URIs also land in addedPeer, keeping the
 // auto-selection from duplicating them.
-func (p *Poller) ensureCustomPeerings() {
+//
+// Adding alone is not enough in -once mode: the peering wait that follows
+// returns as soon as ANY link is up — typically one of the five
+// auto-selected ones, faster than our single custom link — and a key the
+// merge cannot find means the peer is never polled by that run (and no row
+// is written for the stateless fallback to pick up). So we block here,
+// bounded, until every custom URI has a key from either the live link or
+// the tracker.
+func (p *Poller) ensureCustomPeerings(ctx context.Context) error {
+	if len(p.cfg.CustomPeers) == 0 {
+		return nil
+	}
 	for _, uri := range p.cfg.CustomPeers {
 		if p.addedPeer[uri] {
 			continue
@@ -127,6 +140,39 @@ func (p *Poller) ensureCustomPeerings() {
 		p.addedPeer[uri] = true
 		p.log.Info("custom peering added", "uri", uri)
 	}
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		var missing []string
+		for _, uri := range p.cfg.CustomPeers {
+			if !p.customKeyResolved(uri) {
+				missing = append(missing, uri)
+			}
+		}
+		if len(missing) == 0 {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			p.log.Warn("custom peers without a key after wait", "uris", strings.Join(missing, ", "))
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(2 * time.Second):
+		}
+	}
+}
+
+// customKeyResolved reports whether uri's public key is available right now:
+// from an up outgoing link, or from the tracker's stored rows.
+func (p *Poller) customKeyResolved(uri string) bool {
+	norm := normalizePeerURI(uri)
+	for _, l := range p.linkInfos() {
+		if l.Up && !l.Inbound && l.Key != "" && normalizePeerURI(l.URI) == norm {
+			return true
+		}
+	}
+	return p.tr != nil && p.tr.KeyForEndpoint(uri) != ""
 }
 
 // mergeCustomPeers rebuilds the polled list as publicnodes + custom peers

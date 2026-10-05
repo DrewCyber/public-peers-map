@@ -93,13 +93,10 @@ func (p *Poller) CycleOnce(ctx context.Context) error {
 	if err := p.refreshList(ctx); err != nil {
 		return err
 	}
-	p.ensureCustomPeerings()
-	if err := p.ensurePeerings(ctx); err != nil {
-		return err
-	}
 
-	// The tracker must exist before custom peers are merged: a custom peer
-	// that is currently down recovers its key from the stored rows.
+	// The tracker must exist before the custom-peer steps: the key wait
+	// treats a DB row as a resolved key, and a currently-down custom peer
+	// recovers its key from the stored rows at merge time.
 	if p.tr == nil {
 		rows, err := p.store.FetchPeers()
 		if err != nil {
@@ -108,6 +105,12 @@ func (p *Poller) CycleOnce(ctx context.Context) error {
 		p.tr = NewTracker()
 		p.tr.Bootstrap(rows)
 		p.log.Info("tracker bootstrapped from API", "rows", len(rows))
+	}
+	if err := p.ensureCustomPeerings(ctx); err != nil {
+		return err
+	}
+	if err := p.ensurePeerings(ctx); err != nil {
+		return err
 	}
 	p.mergeCustomPeers()
 
